@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ops Deck</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="shell">
+  <nav class="sidebar">
+    <div class="sidebar-head">
+      <span class="brand-mark">&gt;_</span>
+      <span class="brand-name">OPS DECK</span>
+    </div>
+
+    <div class="profile-bar" id="profile-bar"></div>
+
+    <div class="sidebar-search">
+      <input type="text" id="global-search" placeholder="Search…" autocomplete="off">
+      <div id="search-results" class="search-results"></div>
+    </div>
+
+    <!-- Nav is rebuilt per-profile by profiles.js (buildNav from the
+         profile's enabled_modules). This single item is just a pre-boot
+         placeholder / fallback. -->
+    <ul class="node-tree" id="node-tree">
+      <li data-section="today" class="node active"><span class="node-bullet">├─</span> Today</li>
+    </ul>
+
+    <div class="sidebar-foot">
+      <button id="notify-btn" class="notify-btn">Enable notifications</button>
+      <div id="clock"></div>
+    </div>
+  </nav>
+
+  <main class="panel" id="panel"></main>
+</div>
+
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal" id="modal"></div>
+</div>
+
+<div class="toast-stack" id="toast-stack"></div>
+
+<script>
+  window.OPSDECK = {
+    token: {{ api_token | tojson }},
+    tz: {{ tz | tojson }}
+  };
+</script>
+<script src="/static/js/core.js"></script>
+<script src="/static/js/today.js"></script>
+<script src="/static/js/board.js"></script>
+<script src="/static/js/calendar.js"></script>
+<script src="/static/js/routines.js"></script>
+<script src="/static/js/docs.js"></script>
+<script src="/static/js/skilltree.js"></script>
+<script src="/static/js/mentor.js"></script>
+<script src="/static/js/thm.js"></script>
+<script src="/static/js/growth.js"></script>
+<script src="/static/js/chat.js"></script>
+<script src="/static/js/profiles.js"></script>
+<script src="/static/js/joint.js"></script>
+<script src="/static/js/main.js"></script>
+</body>
+</html>

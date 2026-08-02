@@ -1,0 +1,30 @@
+# Secrets — never commit. .env holds OPSDECK_TOKEN and any API key.
+.env
+*.env
+!.env.example
+
+# Application data. The database IS the app state; uploads are user files.
+data/
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+
+# Local backups
+*.bak
+backups/
+*.tgz
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp

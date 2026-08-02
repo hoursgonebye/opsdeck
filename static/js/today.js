@@ -1,0 +1,181 @@
+// The landing page: what's happening right now, pulled from every section.
+// Read-mostly, but routines are checkable and cards completable inline so
+// you rarely need to leave it.
+
+async function renderToday() {
+  const panel = el("panel");
+  panel.innerHTML = `<div class="loading">Loading…</div>`;
+
+  const [data, pendingNotes] = await Promise.all([
+    API.get(`/today?date=${todayISO()}`),
+    API.get("/notes/quick?status=pending").catch(() => []),
+  ]);
+
+  const eventsHtml = data.events.length
+    ? data.events.map((e) => `
+        <div class="today-row">
+          <span class="today-time">${e.all_day ? "All day" : fmtTime(e.start_at)}</span>
+          <span class="dot dot-${esc(e.color)}"></span>
+          <span class="today-text">${esc(e.title)}</span>
+          ${e.location ? `<span class="today-meta">${esc(e.location)}</span>` : ""}
+          ${e.rrule ? `<span class="repeat-badge">repeats</span>` : ""}
+        </div>`).join("")
+    : `<p class="empty-state">Nothing scheduled.</p>`;
+
+  const groups = ["morning", "afternoon", "evening", "anytime"];
+  const byGroup = {};
+  data.routines.forEach((r) => (byGroup[r.time_group] ||= []).push(r));
+
+  const routinesHtml = data.routines.length
+    ? groups.filter((g) => byGroup[g]).map((g) => `
+        <div class="routine-group">
+          <div class="phase-label">${esc(g)}</div>
+          ${byGroup[g].map((r) => `
+            <div class="routine-row ${r.done_today ? "done" : ""}" data-routine="${r.id}">
+              <span class="check"></span>
+              <span class="routine-name">${esc(r.name)}</span>
+              ${r.streak > 0 ? `<span class="streak">${r.streak}d</span>` : ""}
+            </div>`).join("")}
+        </div>`).join("")
+    : `<p class="empty-state">No routines yet.</p>`;
+
+  const cardRow = (c) => `
+    <div class="today-row card-row" data-card="${c.id}">
+      <span class="check small"></span>
+      <span class="today-text">${esc(c.title)}</span>
+      <span class="today-meta">${esc(c.board_title)} / ${esc(c.list_title)}</span>
+      <span class="due-pill ${dueClass(c.due_at)}">${fmtDate(c.due_at)}</span>
+    </div>`;
+
+  const overdueHtml = data.cards_overdue.length
+    ? `<div class="today-block overdue-block">
+         <h2 class="block-title">Overdue <span class="count">${data.cards_overdue.length}</span></h2>
+         ${data.cards_overdue.map(cardRow).join("")}
+       </div>`
+    : "";
+
+  const dueHtml = data.cards_due.length
+    ? data.cards_due.map(cardRow).join("")
+    : `<p class="empty-state">Nothing due today.</p>`;
+
+  const doneCount = data.routines.filter((r) => r.done_today).length;
+
+  // Where a suggestion says it'd land, in words, so filing is one glance
+  // and one tap rather than a form.
+  const destOf = (s) => {
+    if (!s || !s.kind) return "a card";
+    if (s.kind === "event") return `calendar${s.due ? " · " + fmtDate(s.due) : ""}`;
+    if (s.kind === "doc") return "Docs · Quick notes";
+    if (s.kind === "routine") return "Routines";
+    if (s.kind === "done") return "already done — dismiss?";
+    const b = s.board;
+    return (b ? `${b.board_title} / ${b.list_title}` : "a card")
+      + (s.due ? " · due " + fmtDate(s.due) : "");
+  };
+
+  const notesHtml = pendingNotes.length
+    ? `<div class="today-block qn-pending">
+         <h2 class="block-title">Unfiled notes <span class="count">${pendingNotes.length}</span></h2>
+         ${pendingNotes.map((n) => `
+           <div class="qn-row" data-note="${n.id}">
+             <span class="qn-body">${esc(n.body)}</span>
+             <span class="qn-dest">→ ${esc(destOf(n.suggestion))}</span>
+             <button class="btn tiny qn-file">File</button>
+             <button class="btn tiny qn-drop">Dismiss</button>
+           </div>`).join("")}
+       </div>`
+    : "";
+
+  panel.innerHTML = `
+    <h1 class="section-title">Today</h1>
+    <p class="section-sub">${fmtDateLong(data.date)}</p>
+
+    <div class="quick-note">
+      <textarea id="qn-input" rows="1" placeholder="Quick note — anything, file it later…"></textarea>
+      <div class="qn-actions">
+        <button class="btn" id="qn-save">Capture</button>
+        <button class="btn primary" id="qn-file-now">Capture &amp; file</button>
+      </div>
+    </div>
+
+    ${notesHtml}
+
+    ${overdueHtml}
+
+    <div class="today-grid">
+      <div class="today-block">
+        <h2 class="block-title">Schedule</h2>
+        ${eventsHtml}
+      </div>
+
+      <div class="today-block">
+        <h2 class="block-title">
+          Routines <span class="count">${doneCount}/${data.routines.length}</span>
+        </h2>
+        ${routinesHtml}
+      </div>
+    </div>
+
+    <div class="today-block">
+      <h2 class="block-title">Due today</h2>
+      ${dueHtml}
+    </div>
+  `;
+
+  // ---- quick capture ----
+  const input = el("qn-input");
+  const capture = async (fileNow) => {
+    const text = input.value.trim();
+    if (!text) return;
+    try {
+      const note = await API.post("/notes/quick", { body: text, file_now: fileNow });
+      input.value = "";
+      if (note.status === "filed") toast(`Filed as ${note.filed_as}`);
+      else if (fileNow) toast("Captured — not sure where it goes, left it below", "info", 5000);
+      else toast("Note captured");
+      renderToday();
+    } catch (e) { /* API client already toasted the reason */ }
+  };
+  el("qn-save").addEventListener("click", () => capture(false));
+  el("qn-file-now").addEventListener("click", () => capture(true));
+
+  // Enter files it, Shift+Enter for a newline - capture should be one key.
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); capture(true); }
+  });
+  input.addEventListener("input", () => {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 160) + "px";
+  });
+
+  panel.querySelectorAll(".qn-row").forEach((row) => {
+    const id = row.dataset.note;
+    row.querySelector(".qn-file").addEventListener("click", async () => {
+      try {
+        const n = await API.post(`/notes/quick/${id}/file`);
+        toast(`Filed as ${n.filed_as}`);
+        renderToday();
+      } catch (e) { /* toasted */ }
+    });
+    row.querySelector(".qn-drop").addEventListener("click", async () => {
+      await API.del(`/notes/quick/${id}`);
+      renderToday();
+    });
+  });
+
+  panel.querySelectorAll(".routine-row").forEach((row) => {
+    row.addEventListener("click", async () => {
+      await API.post(`/routines/${row.dataset.routine}/toggle`, { date: todayISO() });
+      renderToday();
+    });
+  });
+
+  panel.querySelectorAll(".card-row").forEach((row) => {
+    row.querySelector(".check").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await API.patch(`/cards/${row.dataset.card}`, { completed: 1 });
+      toast("Card completed");
+      renderToday();
+    });
+  });
+}

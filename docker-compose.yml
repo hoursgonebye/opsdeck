@@ -1,0 +1,18 @@
+services:
+  opsdeck:
+    build: .
+    container_name: opsdeck
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      # Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+      - OPSDECK_TOKEN=${OPSDECK_TOKEN:?set OPSDECK_TOKEN in .env}
+      - OPSDECK_TZ=${OPSDECK_TZ:-America/New_York}
+      - OPSDECK_MAX_UPLOAD_MB=${OPSDECK_MAX_UPLOAD_MB:-25}
+      # Optional: enables in-app mentor verification. Without it,
+      # attempts queue for an external agent (Claude Code) instead.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPSDECK_MENTOR_MODEL=${OPSDECK_MENTOR_MODEL:-claude-sonnet-4-6}
+    restart: unless-stopped

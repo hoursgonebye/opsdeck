@@ -1,0 +1,207 @@
+// Profiles: the tab bar that switches whose dashboard you're looking at,
+// per-profile theming, and the Settings section.
+//
+// Switching a profile changes window.OPSDECK.activeProfile (which the API
+// client sends as X-Profile-Id on every call), reloads that profile's
+// settings, re-themes the page, and rebuilds the nav from the profile's
+// enabled_modules. The whole app is one profile at a time.
+
+const ALL_MODULES = [
+  { key: "today", label: "Today", section: "today" },
+  { key: "boards", label: "Boards", section: "board" },
+  { key: "calendar", label: "Calendar", section: "calendar" },
+  { key: "routines", label: "Routines", section: "routines" },
+  { key: "docs", label: "Docs", section: "docs" },
+  { key: "tree", label: "Skill tree", section: "tree" },
+  { key: "thm", label: "TryHackMe", section: "thm" },
+  { key: "growth", label: "Growth", section: "growth" },
+  { key: "chat", label: "Mentor", section: "chat" },
+  { key: "joint", label: "Us", section: "joint" },
+];
+
+async function bootstrapProfiles() {
+  const [profiles, themes] = await Promise.all([
+    API.get("/profiles"),
+    API.get("/themes"),
+  ]);
+  window.OPSDECK.profiles = profiles;
+  window.OPSDECK.themes = themes;
+
+  const saved = localStorage.getItem("opsdeck-active-profile");
+  const active = profiles.find((p) => p.id === saved) ? saved : "primary";
+  window.OPSDECK.activeProfile = active;
+
+  await loadActiveSettings();
+  renderProfileBar();
+}
+
+async function loadActiveSettings() {
+  window.OPSDECK.settings = await API.get(`/profiles/${window.OPSDECK.activeProfile}/settings`);
+  applyProfileTheme();
+  buildNav();
+}
+
+function renderProfileBar() {
+  const bar = el("profile-bar");
+  if (!bar) return;
+  const active = window.OPSDECK.activeProfile;
+  bar.innerHTML = window.OPSDECK.profiles.map((p) => `
+    <button class="profile-tab ${p.id === active ? "active" : ""}" data-profile="${p.id}">
+      <span class="profile-avatar type-${esc(p.type)}">${esc(initials(p.display_name))}</span>
+      <span class="profile-name">${esc(p.display_name)}</span>
+    </button>`).join("");
+
+  bar.querySelectorAll(".profile-tab").forEach((btn) => {
+    btn.addEventListener("click", () => switchProfile(btn.dataset.profile));
+  });
+}
+
+function initials(name) {
+  return (name || "?").trim().slice(0, 2).toUpperCase();
+}
+
+async function switchProfile(id) {
+  if (id === window.OPSDECK.activeProfile) return;
+  window.OPSDECK.activeProfile = id;
+  localStorage.setItem("opsdeck-active-profile", id);
+  renderProfileBar();
+  await loadActiveSettings();
+  // Land on the profile's first enabled section (joint profiles open on Us).
+  const first = enabledSections()[0] || "today";
+  go(first);
+}
+
+function enabledModules() {
+  const s = window.OPSDECK.settings || {};
+  return s.enabled_modules || ["today", "boards", "calendar", "routines", "docs"];
+}
+
+function enabledSections() {
+  const set = new Set(enabledModules());
+  return ALL_MODULES.filter((m) => set.has(m.key)).map((m) => m.section);
+}
+
+// Rebuild the sidebar nav to show only this profile's enabled modules,
+// always plus Settings at the foot.
+function buildNav() {
+  const tree = el("node-tree");
+  if (!tree) return;
+  const set = new Set(enabledModules());
+  const items = ALL_MODULES.filter((m) => set.has(m.key));
+
+  tree.innerHTML = items.map((m, i) => {
+    const last = i === items.length - 1;
+    const badge = m.section === "growth"
+      ? `<span class="nav-badge" id="nav-badge" hidden></span>` : "";
+    const notif = m.section === "joint"
+      ? `<span class="nav-badge" id="joint-badge" hidden></span>` : "";
+    return `<li data-section="${m.section}" class="node">
+      <span class="node-bullet">${last ? "└─" : "├─"}</span> ${m.label}${badge}${notif}</li>`;
+  }).join("") +
+    `<li class="node-divider"></li>
+     <li data-section="settings" class="node"><span class="node-bullet">⚙</span> Settings</li>`;
+
+  // Re-mark active (buildNav wipes the active class).
+  tree.querySelectorAll(".node").forEach((n) =>
+    n.classList.toggle("active", n.dataset.section === activeSection));
+}
+
+// ---------- Settings section ----------
+async function renderSettings() {
+  const panel = el("panel");
+  panel.innerHTML = `<div class="loading">Loading…</div>`;
+
+  const pid = window.OPSDECK.activeProfile;
+  const [settings, profile, themes] = await Promise.all([
+    API.get(`/profiles/${pid}/settings`),
+    Promise.resolve(window.OPSDECK.profiles.find((p) => p.id === pid)),
+    API.get("/themes"),
+  ]);
+  window.OPSDECK.themes = themes;
+
+  const moduleSet = new Set(settings.enabled_modules || []);
+  const toggleable = ALL_MODULES.filter((m) => m.key !== "today");
+
+  panel.innerHTML = `
+    <h1 class="section-title">Settings</h1>
+    <p class="section-sub">${esc(profile.display_name)} · ${esc(profile.type)} profile</p>
+
+    <div class="settings-block">
+      <h2 class="block-title">Display name</h2>
+      <div class="field-row-inline">
+        <input type="text" id="set-name" value="${escAttr(profile.display_name)}">
+        <button class="btn" id="set-name-save">Save</button>
+      </div>
+    </div>
+
+    <div class="settings-block">
+      <h2 class="block-title">Theme</h2>
+      <div class="theme-grid" id="theme-grid">
+        ${themes.map((t) => `
+          <button class="theme-swatch ${t.id === settings.theme_id ? "active" : ""}" data-theme="${escAttr(t.id)}"
+                  title="${escAttr(t.name)}">
+            <span class="sw sw-bg" style="background:${esc(t.colors.bg)}"></span>
+            <span class="sw sw-surface" style="background:${esc(t.colors.surface)}"></span>
+            <span class="sw sw-accent" style="background:${esc(t.colors.accent)}"></span>
+            <span class="theme-name">${esc(t.name)}</span>
+          </button>`).join("")}
+      </div>
+    </div>
+
+    <div class="settings-block">
+      <h2 class="block-title">Modules on this tab</h2>
+      <p class="settings-hint">Turn a whole section off for this profile. Today is always on.</p>
+      <div class="module-toggles">
+        ${toggleable.map((m) => `
+          <label class="toggle-row">
+            <input type="checkbox" data-module="${m.key}" ${moduleSet.has(m.key) ? "checked" : ""}>
+            <span>${esc(m.label)}</span>
+          </label>`).join("")}
+      </div>
+    </div>
+
+    <div class="settings-block">
+      <h2 class="block-title">Week starts on</h2>
+      <select id="set-weekstart">
+        <option value="monday" ${settings.week_start === "monday" ? "selected" : ""}>Monday</option>
+        <option value="sunday" ${settings.week_start === "sunday" ? "selected" : ""}>Sunday</option>
+      </select>
+    </div>`;
+
+  el("set-name-save").addEventListener("click", async () => {
+    await API.patch(`/profiles/${pid}`, { display_name: el("set-name").value.trim() || profile.display_name });
+    window.OPSDECK.profiles = await API.get("/profiles");
+    renderProfileBar();
+    toast("Name saved");
+  });
+
+  panel.querySelectorAll("[data-theme]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const themeId = btn.dataset.theme;
+      const merged = await API.patch(`/profiles/${pid}/settings`, { theme_id: themeId });
+      window.OPSDECK.settings = merged;
+      applyProfileTheme();
+      panel.querySelectorAll(".theme-swatch").forEach((s) =>
+        s.classList.toggle("active", s.dataset.theme === themeId));
+    });
+  });
+
+  panel.querySelectorAll("[data-module]").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      const on = new Set(settings.enabled_modules);
+      cb.checked ? on.add(cb.dataset.module) : on.delete(cb.dataset.module);
+      if (!on.has("today")) on.add("today");
+      const list = ALL_MODULES.map((m) => m.key).filter((k) => on.has(k));
+      settings.enabled_modules = list;
+      const merged = await API.patch(`/profiles/${pid}/settings`, { enabled_modules: list });
+      window.OPSDECK.settings = merged;
+      buildNav();
+      toast("Modules updated");
+    });
+  });
+
+  el("set-weekstart").addEventListener("change", async (e) => {
+    await API.patch(`/profiles/${pid}/settings`, { week_start: e.target.value });
+    toast("Saved");
+  });
+}
