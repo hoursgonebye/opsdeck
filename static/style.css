@@ -1162,3 +1162,35 @@ a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-vis
   .sidebar, .drawer-backdrop, .mb-burger,
   .mb-burger::before, .mb-burger::after { transition: none !important; }
 }
+
+/* ---- Us: merged calendar ----
+   Both people's events in one grid, colour-coded by owner. Read-only by
+   design: editing happens on each person's own Calendar tab, so this view
+   can never change what the other sees. */
+.joint-cal-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 6px;
+}
+.cal-legend-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.cal-key { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+
+.ev-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--gray); display: inline-block;
+}
+.ev-dot.own-primary { background: var(--blue); }
+.ev-dot.own-partner { background: var(--pink); }
+.ev-dot.own-joint   { background: var(--purple); }
+
+.cal-item.joint-ev { gap: 5px; }
+.cal-item.joint-ev.own-primary { box-shadow: inset 2px 0 0 var(--blue); }
+.cal-item.joint-ev.own-partner { box-shadow: inset 2px 0 0 var(--pink); }
+.cal-item.joint-ev.own-joint   { box-shadow: inset 2px 0 0 var(--purple); }
+.cal-item.joint-ev.span.own-primary { box-shadow: inset 0 0 0 1px var(--blue); background: rgba(91,155,213,.13); }
+.cal-item.joint-ev.span.own-partner { box-shadow: inset 0 0 0 1px var(--pink); background: rgba(216,120,168,.13); }
+.cal-item.joint-ev.span.own-joint   { box-shadow: inset 0 0 0 1px var(--purple); background: rgba(160,135,216,.13); }
+
+@media (max-width: 720px) {
+  .joint-cal-head { flex-direction: column; align-items: stretch; }
+  .joint-cal-head .head-actions .btn { flex: 1; }
+}

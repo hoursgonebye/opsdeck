@@ -104,6 +104,26 @@ def body():
     return request.get_json(force=True, silent=True) or {}
 
 
+# The stylesheet only defines these; anything else renders as an unstyled
+# blank chip. An agent writing through the API had no way to know that, so
+# the server normalises rather than trusting the caller.
+PALETTE = ("gray", "blue", "teal", "green", "amber", "red", "purple", "pink")
+MAX_TIER = 5
+
+
+def _safe_color(value, fallback="teal"):
+    return value if value in PALETTE else fallback
+
+
+def _safe_tier(value, fallback=1):
+    """Tier drives XP value and verification difficulty, so an out-of-range
+    tier silently inflates both. Clamp to the documented 1-5."""
+    try:
+        return max(1, min(MAX_TIER, int(value)))
+    except (TypeError, ValueError):
+        return fallback
+
+
 def one(conn, sql, params=()):
     row = conn.execute(sql, params).fetchone()
     return dict(row) if row else None
@@ -132,7 +152,13 @@ def mentor_chat():
     if not message:
         return jsonify({"error": "empty message"}), 400
 
-    payload = json.dumps({"message": message, "session": d.get("session")}).encode()
+    # Forward which profile the user is viewing, so the mentor scopes its own
+    # API calls to the same tab instead of defaulting to primary.
+    payload = json.dumps({
+        "message": message,
+        "session": d.get("session"),
+        "profile": active_profile(),
+    }).encode()
     req = urllib.request.Request(
         MENTOR_BRIDGE + "/chat",
         data=payload,
@@ -1417,11 +1443,14 @@ def get_attributes():
 def create_attribute():
     d = body()
     conn = connect()
-    pos = conn.execute("SELECT COALESCE(MAX(position),-1)+1 FROM attributes").fetchone()[0]
+    pid = active_profile()
+    pos = conn.execute(
+        "SELECT COALESCE(MAX(position),-1)+1 FROM attributes WHERE profile_id=?", (pid,)
+    ).fetchone()[0]
     cur = conn.execute(
         "INSERT INTO attributes (key,name,color,position,profile_id) VALUES (?,?,?,?,?)",
-        (d["key"], d.get("name", d["key"]), d.get("color", "teal"), d.get("position", pos),
-         active_profile()),
+        (d["key"], d.get("name", d["key"]), _safe_color(d.get("color")),
+         d.get("position", pos), pid),
     )
     conn.commit()
     out = one(conn, "SELECT * FROM attributes WHERE id=?", (cur.lastrowid,))
@@ -1469,7 +1498,7 @@ def create_node():
                                     unlock_attr,unlock_value,profile_id)
            VALUES (?,?,?,?,?,?,?,?,?,?)""",
         (d.get("title", "New node"), d.get("description", ""), d.get("domain", "general"),
-         d.get("x", 0), d.get("y", 0), d.get("tier", 1), d.get("max_level", 5),
+         d.get("x", 0), d.get("y", 0), _safe_tier(d.get("tier", 1)), d.get("max_level", 5),
          d.get("unlock_attr"), d.get("unlock_value"), active_profile()),
     )
     nid = cur.lastrowid
@@ -1494,7 +1523,8 @@ def update_node(nid):
     for f in ("title", "description", "domain", "x", "y", "tier",
               "max_level", "unlock_attr", "unlock_value"):
         if f in d:
-            conn.execute(f"UPDATE skill_nodes SET {f}=? WHERE id=?", (d[f], nid))
+            value = _safe_tier(d[f]) if f == "tier" else d[f]
+            conn.execute(f"UPDATE skill_nodes SET {f}=? WHERE id=?", (value, nid))
     if "weights" in d:
         conn.execute("DELETE FROM node_weights WHERE node_id=?", (nid,))
         for w in d["weights"]:

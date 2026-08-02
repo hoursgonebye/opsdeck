@@ -109,14 +109,27 @@ def _session_exists(session):
     return False
 
 
-def run_claude(message, session):
+def run_claude(message, session, profile="primary"):
     """Run one turn. Returns (reply_text, error_or_None)."""
     with _lock:
         known = session in _seen or _session_exists(session)
         _seen.add(session)
 
+    # Tell the mentor which tab the user is actually looking at. Without
+    # this it has to infer the profile from the conversation and defaults to
+    # 'primary' - which is how a request to add skills to her tree ended up
+    # writing to his. Ambient context beats hoping it remembers a rule.
+    scoped = SYSTEM + (
+        f"\n\nThe user is currently on the '{profile}' profile. Unless they "
+        f"clearly mean someone else, every content call you make should send "
+        f"X-Profile-Id: {profile} - including anything that creates or "
+        f"deletes boards, cards, routines, docs, skill nodes or attributes. "
+        f"If a request would write to a different profile than the one "
+        f"they're viewing, say which one you're about to touch first."
+    )
+
     cmd = ["claude", "-p", message, "--output-format", "json",
-           "--allowedTools", ALLOWED, "--append-system-prompt", SYSTEM]
+           "--allowedTools", ALLOWED, "--append-system-prompt", scoped]
     cmd += ["--resume", session] if known else ["--session-id", session]
 
     env = dict(os.environ)
@@ -195,7 +208,11 @@ class Handler(BaseHTTPRequestHandler):
         if not re.fullmatch(r"[0-9a-fA-F-]{36}", session):
             session = str(uuid.uuid4())
 
-        reply, error = run_claude(message, session)
+        profile = body.get("profile") or "primary"
+        if profile not in ("primary", "partner", "joint"):
+            profile = "primary"
+
+        reply, error = run_claude(message, session, profile)
 
         # A session can still be unusable - corrupted, deleted underneath us,
         # or claimed by another process. Losing the thread is annoying;
@@ -203,7 +220,7 @@ class Handler(BaseHTTPRequestHandler):
         # and tell the client which id to use from now on.
         if error and SESSION_TROUBLE.search(error or ""):
             session = str(uuid.uuid4())
-            reply, error = run_claude(message, session)
+            reply, error = run_claude(message, session, profile)
 
         if error:
             self._send(502, {"error": error, "session": session})

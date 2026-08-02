@@ -6,6 +6,9 @@
 // entries.
 
 let jointTab = "home";
+// Month shown on the Us calendar; independent of the personal calendar's.
+let jointCalYear = new Date().getFullYear();
+let jointCalMonth = new Date().getMonth();
 
 async function renderJoint() {
   const panel = el("panel");
@@ -13,7 +16,7 @@ async function renderJoint() {
     <div class="section-head-row">
       <h1 class="section-title">Us</h1>
       <div class="joint-subnav" id="joint-subnav">
-        ${["home", "wall", "mailbox", "plans", "q&a"].map((t) =>
+        ${["home", "calendar", "wall", "mailbox", "plans", "q&a"].map((t) =>
           `<button class="board-tab ${t === jointTab ? "active" : ""}" data-jtab="${t}">${t}</button>`).join("")}
       </div>
     </div>
@@ -25,6 +28,7 @@ async function renderJoint() {
   const body = el("joint-body");
   try {
     if (jointTab === "home") await jointHome(body);
+    else if (jointTab === "calendar") await jointCalendar(body);
     else if (jointTab === "wall") await jointWall(body);
     else if (jointTab === "mailbox") await jointMailbox(body);
     else if (jointTab === "plans") await jointPlans(body);
@@ -32,6 +36,112 @@ async function renderJoint() {
   } catch (e) {
     body.innerHTML = `<p class="empty-state">Couldn't load this — ${esc(e.message || "error")}.</p>`;
   }
+}
+
+// ---------- merged calendar ----------
+// Read-only view of BOTH people's events plus anything owned by the joint
+// profile, colour-coded by whose it is. This is the only place the two
+// calendars meet: each person's own Calendar tab stays scoped to them.
+async function jointCalendar(body) {
+  const first = new Date(jointCalYear, jointCalMonth, 1);
+  const last = new Date(jointCalYear, jointCalMonth + 1, 0);
+  const isoOfLocal = (d) =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const gridStart = addDaysISO(isoOfLocal(first), -first.getDay());
+  const gridEnd = addDaysISO(isoOfLocal(last), 6 - last.getDay());
+
+  const occurrences = await API.get(`/joint/calendar?start=${gridStart}&end=${gridEnd}`);
+
+  const owners = {};
+  (window.OPSDECK.profiles || []).forEach((p) => (owners[p.id] = p));
+  const ownerClass = { primary: "own-primary", partner: "own-partner", joint: "own-joint" };
+
+  const byDate = {};
+  occurrences.forEach((o) => {
+    const startDay = o.start_at.slice(0, 10);
+    const endDay = (o.end_at || o.start_at).slice(0, 10);
+    const base = {
+      title: o.title, owner: o.owner_profile_id,
+      time: o.all_day ? "" : fmtTime(o.start_at),
+    };
+    if (endDay <= startDay) {
+      (byDate[startDay] ||= []).push({ ...base, span: false });
+      return;
+    }
+    for (let day = startDay; day <= endDay; day = addDaysISO(day, 1)) {
+      const isStart = day === startDay, isEnd = day === endDay;
+      (byDate[day] ||= []).push({
+        ...base, span: true,
+        spanClass: isStart ? "span-start" : isEnd ? "span-end" : "span-mid",
+        time: isStart && !o.all_day ? fmtTime(o.start_at) : "",
+      });
+    }
+  });
+  Object.values(byDate).forEach((items) =>
+    items.sort((a, b) => (b.span ? 1 : 0) - (a.span ? 1 : 0)));
+
+  const today = todayISO();
+  let cells = "";
+  let cursor = gridStart;
+  while (cursor <= gridEnd) {
+    const inMonth = new Date(cursor + "T00:00:00").getMonth() === jointCalMonth;
+    const items = byDate[cursor] || [];
+    cells += `
+      <div class="cal-cell ${inMonth ? "" : "outside"} ${cursor === today ? "today" : ""}">
+        <div class="cal-daynum">${Number(cursor.slice(8, 10))}</div>
+        ${items.slice(0, 4).map((i) => `
+          <div class="cal-item joint-ev ${ownerClass[i.owner] || ""} ${i.span ? `span ${i.spanClass}` : ""}"
+               title="${escAttr(i.title)} — ${escAttr(owners[i.owner] ? owners[i.owner].display_name : i.owner)}">
+            <span class="ev-dot"></span>
+            ${i.time ? `<span class="cal-time">${i.time}</span>` : ""}
+            <span class="cal-item-text">${esc(i.title)}</span>
+          </div>`).join("")}
+        ${items.length > 4 ? `<div class="cal-more">+${items.length - 4} more</div>` : ""}
+      </div>`;
+    cursor = addDaysISO(cursor, 1);
+  }
+
+  const monthName = first.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+  body.innerHTML = `
+    <div class="joint-cal-head">
+      <div class="cal-legend-row">
+        ${(window.OPSDECK.profiles || []).map((p) => `
+          <span class="cal-key"><span class="ev-dot ${ownerClass[p.id] || ""}"></span>
+            ${esc(p.display_name)}</span>`).join("")}
+      </div>
+      <div class="head-actions">
+        <button class="btn" id="jc-prev">‹</button>
+        <button class="btn" id="jc-today">Today</button>
+        <button class="btn" id="jc-next">›</button>
+      </div>
+    </div>
+    <p class="section-sub">${monthName}</p>
+    <div class="cal-scroll">
+      <div class="cal-grid">
+        ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => `<div class="cal-head">${d}</div>`).join("")}
+        ${cells}
+      </div>
+    </div>
+    <p class="cal-legend">
+      Both calendars, merged and read-only. Add or edit events on your own
+      Calendar tab — this view never changes what the other person sees.
+    </p>`;
+
+  el("jc-prev").addEventListener("click", () => { shiftJointMonth(-1); });
+  el("jc-next").addEventListener("click", () => { shiftJointMonth(1); });
+  el("jc-today").addEventListener("click", () => {
+    jointCalYear = new Date().getFullYear();
+    jointCalMonth = new Date().getMonth();
+    renderJoint();
+  });
+}
+
+function shiftJointMonth(delta) {
+  jointCalMonth += delta;
+  if (jointCalMonth < 0) { jointCalMonth = 11; jointCalYear--; }
+  if (jointCalMonth > 11) { jointCalMonth = 0; jointCalYear++; }
+  renderJoint();
 }
 
 function otherProfile() {

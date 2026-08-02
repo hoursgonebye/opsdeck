@@ -243,6 +243,15 @@ Respond with JSON only, no other text:
 
 # ------------------------------------------------- applying proposals
 
+def _clamp_tier(value, fallback=1):
+    """Tier feeds XP value and verification difficulty; out-of-range inflates
+    both silently. Same 1-5 clamp the REST API applies."""
+    try:
+        return max(1, min(5, int(value)))
+    except (TypeError, ValueError):
+        return fallback
+
+
 def apply_proposal(conn, proposal):
     """
     Execute an approved proposal's action list.
@@ -288,7 +297,8 @@ def apply_proposal(conn, proposal):
                                                 unlock_attr,unlock_value,profile_id)
                        VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (a["title"], a.get("description", ""), a.get("domain", "general"),
-                     a.get("x", 0), a.get("y", 0), a.get("tier", 1), a.get("max_level", 5),
+                     a.get("x", 0), a.get("y", 0), _clamp_tier(a.get("tier", 1)),
+                     a.get("max_level", 5),
                      a.get("unlock_attr"), a.get("unlock_value"), owner),
                 )
                 nid = cur.lastrowid
