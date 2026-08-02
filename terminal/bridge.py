@@ -62,6 +62,14 @@ destructive it is."""
 
 ALLOWED = "Bash,Read,Glob,Grep,Write,Edit"
 
+# Errors that mean "this session is unusable" rather than "the request was
+# bad" - worth one silent retry on a fresh session id.
+SESSION_TROUBLE = re.compile(
+    r"session id .* (already in use|not found)|no conversation found|"
+    r"could not (find|resume) session|invalid session",
+    re.I,
+)
+
 
 def _logged_in():
     """
@@ -81,17 +89,35 @@ def _logged_in():
     return False
 
 
+def _session_exists(session):
+    """
+    Whether Claude Code already has this session on disk.
+
+    This used to be tracked in an in-memory set, which was wrong: the browser
+    keeps its session id in localStorage forever, but the set is empty after
+    any container restart. A returning client then looked "new", so we passed
+    --session-id for an id that already existed and Claude refused with
+    "Session ID ... is already in use". Disk is the actual source of truth
+    and survives restarts.
+    """
+    root = os.path.expanduser("~/.claude/projects")
+    if not os.path.isdir(root):
+        return False
+    for proj in os.listdir(root):
+        if os.path.exists(os.path.join(root, proj, f"{session}.jsonl")):
+            return True
+    return False
+
+
 def run_claude(message, session):
     """Run one turn. Returns (reply_text, error_or_None)."""
-    new = False
     with _lock:
-        if session not in _seen:
-            _seen.add(session)
-            new = True
+        known = session in _seen or _session_exists(session)
+        _seen.add(session)
 
     cmd = ["claude", "-p", message, "--output-format", "json",
            "--allowedTools", ALLOWED, "--append-system-prompt", SYSTEM]
-    cmd += ["--session-id", session] if new else ["--resume", session]
+    cmd += ["--resume", session] if known else ["--session-id", session]
 
     env = dict(os.environ)
     env.pop("ANTHROPIC_API_KEY", None)   # belt and braces: never bill the API
@@ -170,6 +196,15 @@ class Handler(BaseHTTPRequestHandler):
             session = str(uuid.uuid4())
 
         reply, error = run_claude(message, session)
+
+        # A session can still be unusable - corrupted, deleted underneath us,
+        # or claimed by another process. Losing the thread is annoying;
+        # refusing to answer at all is worse. Retry once on a fresh session
+        # and tell the client which id to use from now on.
+        if error and SESSION_TROUBLE.search(error or ""):
+            session = str(uuid.uuid4())
+            reply, error = run_claude(message, session)
+
         if error:
             self._send(502, {"error": error, "session": session})
         else:
