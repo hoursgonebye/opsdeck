@@ -1,0 +1,41 @@
+services:
+  terminal:
+    build: .
+    container_name: opsdeck-terminal
+    # Bound to the tailnet address ONLY. Not 0.0.0.0 - the LAN
+    # (10.0.0.0/24) must not be able to reach a shell.
+    ports:
+      - "127.0.0.1:7681:7681"
+    environment:
+      - OPSDECK_URL=http://opsdeck:5000
+      - OPSDECK_TOKEN=${OPSDECK_TOKEN:?set OPSDECK_TOKEN in .env}
+      - TTYD_USER=${TTYD_USER:?set TTYD_USER in .env}
+      - TTYD_PASS=${TTYD_PASS:?set TTYD_PASS in .env}
+      # ANTHROPIC_API_KEY is deliberately NOT passed. Claude Code falls back
+      # to your Claude subscription login, which is the whole point - if a
+      # key were present here it would bill the API instead.
+    volumes:
+      - workspace:/workspace
+      - claude-config:/home/node/.claude
+    networks:
+      - opsdeck
+    # Hardening: no new privileges, drop every capability, read-only root
+    # with explicit writable mounts.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # 1GB host: keep the terminal from starving the app.
+    mem_limit: 512m
+    restart: unless-stopped
+    # start.sh runs ttyd (7681, published to tailnet) and the chat bridge
+    # (7682, network-internal - deliberately NOT in `ports`).
+
+volumes:
+  workspace:
+  claude-config:
+
+networks:
+  opsdeck:
+    external: true
+    name: opsdeck_default

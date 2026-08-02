@@ -219,8 +219,20 @@ There is **no endpoint that sets a level directly.** By design.
 | `POST` | `/api/proposals/{id}/reject` | |
 
 Proposal actions (a deliberately small vocabulary, not arbitrary SQL):
-`move_card`, `set_due`, `update_card`, `create_card`, `create_node`,
-`update_node`, `create_edge`, `delete_edge`, `create_routine`.
+
+*Non-destructive:* `move_card`, `set_due`, `update_card`, `create_card`,
+`create_node`, `update_node`, `create_edge`, `delete_edge`, `create_routine`.
+
+*Destructive:* `delete_card`, `delete_list`, `delete_board`, `delete_node`,
+`delete_routine`, `delete_doc`, `delete_event`, `delete_label`,
+`delete_checklist_item`, `delete_attribute`.
+
+Deletes are **permanent and cascade** — removing a board takes its lists and
+cards, removing a skill node takes its level history. They still route
+through the proposal queue, so nothing runs until you've read the summary
+and approved it. An agent asked *directly* to delete something can also just
+call the relevant `DELETE` endpoint; the proposal queue is for changes the
+agent initiated, not for changes you asked for.
 
 ---
 

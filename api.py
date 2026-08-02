@@ -1385,7 +1385,7 @@ def get_xp():
     """?weeks=12 - weekly XP history with per-source breakdown."""
     weeks = int(request.args.get("weeks", 12))
     conn = connect()
-    data = growth.weekly_xp(conn, weeks)
+    data = growth.weekly_xp(conn, weeks, active_profile())
     conn.close()
     return jsonify({
         "weeks": data,
@@ -1405,8 +1405,8 @@ def get_xp():
 def get_attributes():
     conn = connect()
     out = {
-        "current": growth.attribute_values(conn),
-        "history": growth.attribute_history(conn, int(request.args.get("weeks", 12))),
+        "current": growth.attribute_values(conn, profile_id=active_profile()),
+        "history": growth.attribute_history(conn, int(request.args.get("weeks", 12)), active_profile()),
     }
     conn.close()
     return jsonify(out)
@@ -1419,8 +1419,9 @@ def create_attribute():
     conn = connect()
     pos = conn.execute("SELECT COALESCE(MAX(position),-1)+1 FROM attributes").fetchone()[0]
     cur = conn.execute(
-        "INSERT INTO attributes (key,name,color,position) VALUES (?,?,?,?)",
-        (d["key"], d.get("name", d["key"]), d.get("color", "teal"), d.get("position", pos)),
+        "INSERT INTO attributes (key,name,color,position,profile_id) VALUES (?,?,?,?,?)",
+        (d["key"], d.get("name", d["key"]), d.get("color", "teal"), d.get("position", pos),
+         active_profile()),
     )
     conn.commit()
     out = one(conn, "SELECT * FROM attributes WHERE id=?", (cur.lastrowid,))
@@ -1453,7 +1454,7 @@ def modify_attribute(aid):
 @require_token
 def get_tree():
     conn = connect()
-    out = growth.load_tree(conn)
+    out = growth.load_tree(conn, active_profile())
     conn.close()
     return jsonify(out)
 
@@ -1465,11 +1466,11 @@ def create_node():
     conn = connect()
     cur = conn.execute(
         """INSERT INTO skill_nodes (title,description,domain,x,y,tier,max_level,
-                                    unlock_attr,unlock_value)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
+                                    unlock_attr,unlock_value,profile_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
         (d.get("title", "New node"), d.get("description", ""), d.get("domain", "general"),
          d.get("x", 0), d.get("y", 0), d.get("tier", 1), d.get("max_level", 5),
-         d.get("unlock_attr"), d.get("unlock_value")),
+         d.get("unlock_attr"), d.get("unlock_value"), active_profile()),
     )
     nid = cur.lastrowid
     for w in d.get("weights", []):
@@ -1617,7 +1618,7 @@ def request_levelup(nid):
         conn.close()
         return jsonify({"error": "node is already at max level"}), 400
 
-    attrs = growth.attribute_values(conn)
+    attrs = growth.attribute_values(conn, profile_id=active_profile())
     if growth.node_locked(node, {a["key"]: a["value"] for a in attrs}):
         conn.close()
         return jsonify({
@@ -1644,9 +1645,10 @@ def request_levelup(nid):
 
     difficulty = growth.verification_difficulty(conn, node)
     cur = conn.execute(
-        "INSERT INTO levelup_attempts (node_id,target_level,difficulty,evidence_doc,room_code) "
-        "VALUES (?,?,?,?,?)",
-        (nid, node["level"] + 1, difficulty, evidence_doc, d.get("room_code")),
+        "INSERT INTO levelup_attempts (node_id,target_level,difficulty,evidence_doc,room_code,profile_id) "
+        "VALUES (?,?,?,?,?,?)",
+        (nid, node["level"] + 1, difficulty, evidence_doc, d.get("room_code"),
+         node["profile_id"]),
     )
     aid = cur.lastrowid
     conn.commit()
@@ -1681,11 +1683,17 @@ def list_attempts():
     """?status=awaiting_questions - what an external mentor should work on."""
     conn = connect()
     sql = ("SELECT a.*, n.title AS node_title, n.domain, n.tier "
-           "FROM levelup_attempts a JOIN skill_nodes n ON n.id=a.node_id")
-    params = ()
+           "FROM levelup_attempts a JOIN skill_nodes n ON n.id=a.node_id "
+           "WHERE a.profile_id=?")
+    params = [active_profile()]
+    # An agent working the queue can ask for every profile's attempts at once.
+    if request.args.get("scope") == "all":
+        sql = ("SELECT a.*, n.title AS node_title, n.domain, n.tier "
+               "FROM levelup_attempts a JOIN skill_nodes n ON n.id=a.node_id WHERE 1=1")
+        params = []
     if "status" in request.args:
-        sql += " WHERE a.status=?"
-        params = (request.args["status"],)
+        sql += " AND a.status=?"
+        params.append(request.args["status"])
     sql += " ORDER BY a.created_at DESC LIMIT 50"
     rows = many(conn, sql, params)
     for r in rows:
@@ -1795,15 +1803,20 @@ def _resolve_attempt(conn, aid, verdict):
     granted = bool(verdict.get("granted"))
     feedback = verdict.get("feedback", "")
 
-    before = growth.attribute_values(conn)
+    # Attribute movement is measured against the attempt's own owner, not
+    # whoever happens to be the active profile on this request - an agent
+    # can grade someone else's attempt.
+    owner_pid = attempt["profile_id"] if attempt else "primary"
+
+    before = growth.attribute_values(conn, profile_id=owner_pid)
     new_level = None
     unlocked = []
 
     if granted:
         new_level = growth.grant_level(conn, attempt["node_id"], aid)
         conn.commit()
-        after = growth.attribute_values(conn)
-        unlocked = growth.newly_unlocked(conn, before, after)
+        after = growth.attribute_values(conn, profile_id=owner_pid)
+        unlocked = growth.newly_unlocked(conn, before, after, owner_pid)
         # A verified level changes the gap picture, so the stored TryHackMe
         # recommendation is stale. Flag it rather than regenerating inline -
         # grading shouldn't wait on a second model call.
@@ -1835,7 +1848,7 @@ def _resolve_attempt(conn, aid, verdict):
                 "parents": [node["id"]],
             })
         cur = conn.execute(
-            "INSERT INTO ai_proposals (kind,title,rationale,actions) VALUES (?,?,?,?)",
+            "INSERT INTO ai_proposals (kind,title,rationale,actions,profile_id) VALUES (?,?,?,?,?)",
             ("tree_expansion",
              f"New nodes after {node['title']}",
              "; ".join(s.get("rationale", "") for s in suggestions[:3]),
@@ -1889,7 +1902,9 @@ def _thm_completions(conn):
         conn,
         "SELECT c.*, r.title, r.difficulty, r.tags "
         "FROM thm_completions c JOIN thm_rooms r ON r.code = c.room_code "
+        "WHERE c.profile_id = ? "
         "ORDER BY c.local_date DESC, c.id DESC",
+        (active_profile(),),
     )
     for r in rows:
         r["tags"] = json.loads(r["tags"] or "[]")
@@ -1983,9 +1998,9 @@ def thm_sync():
         # Synced completions land on today's date - the profile doesn't say
         # when a room was finished, only that it was.
         conn.execute(
-            "INSERT OR IGNORE INTO thm_completions (room_code, local_date, source) "
-            "VALUES (?,?, 'sync')",
-            (code, today),
+            "INSERT OR IGNORE INTO thm_completions (room_code, local_date, source, profile_id) "
+            "VALUES (?,?, 'sync', ?)",
+            (code, today, active_profile()),
         )
     conn.commit()
     out = {"synced": True, "added": len(new_codes), "total_on_profile": len(codes)}
@@ -2024,8 +2039,8 @@ def thm_log_completion():
     date = d.get("date") or today_local().isoformat()
     try:
         conn.execute(
-            "INSERT INTO thm_completions (room_code, local_date, source) VALUES (?,?, 'manual')",
-            (code, date),
+            "INSERT INTO thm_completions (room_code, local_date, source, profile_id) VALUES (?,?, 'manual', ?)",
+            (code, date, active_profile()),
         )
     except Exception:
         conn.close()
@@ -2139,8 +2154,8 @@ def list_proposals():
     status = request.args.get("status", "pending")
     rows = many(
         conn,
-        "SELECT * FROM ai_proposals WHERE status=? ORDER BY created_at DESC LIMIT 50",
-        (status,),
+        "SELECT * FROM ai_proposals WHERE status=? AND profile_id=? ORDER BY created_at DESC LIMIT 50",
+        (status, active_profile()),
     )
     for r in rows:
         r["actions"] = json.loads(r["actions"] or "[]")
@@ -2214,11 +2229,11 @@ def mentor_status():
         "direct_mode": mentor.available(),
         "model": mentor.MODEL if mentor.available() else None,
         "pending_attempts": conn.execute(
-            "SELECT COUNT(*) FROM levelup_attempts WHERE status IN "
-            "('awaiting_questions','awaiting_answer','grading')"
+            "SELECT COUNT(*) FROM levelup_attempts WHERE profile_id=? AND status IN "
+            "('awaiting_questions','awaiting_answer','grading')", (active_profile(),)
         ).fetchone()[0],
         "pending_proposals": conn.execute(
-            "SELECT COUNT(*) FROM ai_proposals WHERE status='pending'"
+            "SELECT COUNT(*) FROM ai_proposals WHERE status='pending' AND profile_id=?", (active_profile(),)
         ).fetchone()[0],
     }
     conn.close()
@@ -2244,8 +2259,8 @@ def full_context():
             lst["cards"] = load_cards(conn, lst["id"])
         boards_data.append(b)
 
-    tree = growth.load_tree(conn)
-    xp = growth.weekly_xp(conn, 8)
+    tree = growth.load_tree(conn, active_profile())
+    xp = growth.weekly_xp(conn, 8, active_profile())
     routines = many(conn, "SELECT * FROM routines WHERE active=1 ORDER BY time_group, position")
     docs_index = many(conn, "SELECT id,title,kind,folder,updated_at FROM docs ORDER BY updated_at DESC LIMIT 50")
 

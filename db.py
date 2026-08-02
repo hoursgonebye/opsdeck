@@ -19,10 +19,17 @@ DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = DATA_DIR / "opsdeck.db"
 UPLOAD_DIR = DATA_DIR / "uploads"
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Tables that gain a profile_id in v5. Pre-v5 rows all belong to 'primary'.
 PROFILE_SCOPED_TABLES = ("boards", "events", "routines", "docs", "quick_notes")
+
+# v6 extends scoping to the growth system and the mentor, so each profile
+# has its own skill tree, its own attributes, and its own verification
+# queue. Child tables (node_weights, skill_edges, skill_levels) inherit
+# scope through skill_nodes rather than carrying a redundant column.
+GROWTH_SCOPED_TABLES = ("skill_nodes", "attributes", "levelup_attempts",
+                        "ai_proposals", "thm_completions")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS boards (
@@ -607,6 +614,26 @@ def _migrate(conn):
                 )
         _seed_profiles(conn)
 
+    if current < 6:
+        # v6: the skill tree, attributes, and the mentor queue become
+        # per-profile. Everything that exists today was built by the
+        # original owner, so it backfills to 'primary' - the partner starts
+        # with her own empty tree rather than inheriting a cybersecurity map
+        # she never asked for.
+        for table in GROWTH_SCOPED_TABLES:
+            if "profile_id" not in _columns(conn, table):
+                conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN profile_id TEXT "
+                    f"NOT NULL DEFAULT 'primary'"
+                )
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{table}_profile "
+                    f"ON {table}(profile_id)"
+                )
+        # attributes.key was globally unique by convention; with per-profile
+        # attributes two people can both have a 'health' stat.
+        conn.execute("DROP INDEX IF EXISTS idx_attributes_key")
+
     conn.execute(
         "INSERT INTO settings (key,value) VALUES ('schema_version',?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -614,21 +641,35 @@ def _migrate(conn):
     )
 
 
-def _seed_growth(conn):
-    """Seed attributes and the starter tree only if they're empty."""
-    if conn.execute("SELECT COUNT(*) FROM attributes").fetchone()[0] == 0:
+def _seed_growth(conn, profile_id="primary", attributes=None, nodes=None, edges=None):
+    """
+    Seed one profile's attributes and starter tree, only if that profile has
+    none. Per-profile since v6: each person's tree is their own, so this can
+    be called again for a new profile without touching an existing one.
+    """
+    attributes = attributes if attributes is not None else SEED_ATTRIBUTES
+    nodes = nodes if nodes is not None else SEED_NODES
+    edges = edges if edges is not None else SEED_EDGES
+
+    has_attrs = conn.execute(
+        "SELECT COUNT(*) FROM attributes WHERE profile_id=?", (profile_id,)
+    ).fetchone()[0]
+    if has_attrs == 0:
         conn.executemany(
-            "INSERT INTO attributes (key,name,color,position) VALUES (?,?,?,?)",
-            SEED_ATTRIBUTES,
+            "INSERT INTO attributes (key,name,color,position,profile_id) VALUES (?,?,?,?,?)",
+            [(k, n, c, p, profile_id) for k, n, c, p in attributes],
         )
 
-    if conn.execute("SELECT COUNT(*) FROM skill_nodes").fetchone()[0] == 0:
+    has_nodes = conn.execute(
+        "SELECT COUNT(*) FROM skill_nodes WHERE profile_id=?", (profile_id,)
+    ).fetchone()[0]
+    if has_nodes == 0:
         ids = {}
-        for title, domain, x, y, tier, weights, ua, uv in SEED_NODES:
+        for title, domain, x, y, tier, weights, ua, uv in nodes:
             cur = conn.execute(
-                """INSERT INTO skill_nodes (title,domain,x,y,tier,unlock_attr,unlock_value)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (title, domain, x, y, tier, ua, uv),
+                """INSERT INTO skill_nodes (title,domain,x,y,tier,unlock_attr,unlock_value,profile_id)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (title, domain, x, y, tier, ua, uv, profile_id),
             )
             ids[title] = cur.lastrowid
             for key, w in weights:
@@ -636,12 +677,78 @@ def _seed_growth(conn):
                     "INSERT INTO node_weights (node_id,attribute_key,weight) VALUES (?,?,?)",
                     (cur.lastrowid, key, w),
                 )
-        for a, b in SEED_EDGES:
+        for a, b in edges:
             if a in ids and b in ids:
                 conn.execute(
                     "INSERT OR IGNORE INTO skill_edges (from_id,to_id) VALUES (?,?)",
                     (ids[a], ids[b]),
                 )
+
+
+# ---------------------------------------------------------------- partner
+# The partner profile gets its own attributes and its own starter tree. The
+# primary seed is a cybersecurity map, which would be meaningless to someone
+# not doing that - so this is a deliberately broad, non-technical starting
+# point. Everything here is editable: rename a domain, delete a node, or
+# clear it out and build from scratch.
+
+PARTNER_ATTRIBUTES = [
+    ("wellbeing", "Wellbeing", "green", 0),
+    ("craft", "Craft", "purple", 1),
+    ("mind", "Mind", "blue", 2),
+    ("home", "Home", "amber", 3),
+    ("people", "People", "pink", 4),
+    ("work", "Work", "teal", 5),
+]
+
+#  (title, domain, x, y, tier, [(attr, weight)], unlock_attr, unlock_value)
+PARTNER_NODES = [
+    ("Movement",           "wellbeing", 400, 300, 1, [("wellbeing", 1.0)], None, None),
+    ("Sleep routine",      "wellbeing", 250, 220, 2, [("wellbeing", 1.0)], None, None),
+    ("Cooking",            "wellbeing", 320, 430, 2, [("wellbeing", 0.7), ("home", 0.5)], None, None),
+    ("Strength training",  "wellbeing", 180, 360, 3, [("wellbeing", 1.0)], None, None),
+
+    ("Creative practice",  "craft",     760, 300, 1, [("craft", 1.0)], None, None),
+    ("Drawing",            "craft",     900, 230, 2, [("craft", 1.0)], None, None),
+    ("Photography",        "craft",     900, 380, 2, [("craft", 1.0)], None, None),
+    ("Writing",            "craft",     640, 220, 2, [("craft", 0.8), ("mind", 0.4)], None, None),
+
+    ("Reading habit",      "mind",      400, 640, 1, [("mind", 1.0)], None, None),
+    ("Learning a language","mind",      250, 700, 2, [("mind", 1.0), ("people", 0.3)], None, None),
+    ("Focus & attention",  "mind",      540, 700, 2, [("mind", 1.0)], None, None),
+
+    ("Home systems",       "home",      760, 640, 1, [("home", 1.0)], None, None),
+    ("Budgeting",          "home",      900, 700, 2, [("home", 0.8), ("work", 0.4)], None, None),
+    ("Plants & garden",    "home",      640, 720, 2, [("home", 0.7), ("wellbeing", 0.3)], None, None),
+
+    ("Relationships",      "people",   1120, 300, 1, [("people", 1.0)], None, None),
+    ("Hosting",            "people",   1240, 380, 2, [("people", 0.8), ("home", 0.4)], None, None),
+    ("Hard conversations", "people",   1240, 220, 3, [("people", 1.0)], None, None),
+
+    ("Career skills",      "work",     1120, 640, 1, [("work", 1.0)], None, None),
+    ("Public speaking",    "work",     1240, 700, 3, [("work", 0.8), ("people", 0.5)], None, None),
+    ("Organisation",       "work",     1000, 720, 2, [("work", 0.7), ("home", 0.4)], None, None),
+]
+
+PARTNER_EDGES = [
+    ("Movement", "Sleep routine"), ("Movement", "Cooking"),
+    ("Sleep routine", "Strength training"),
+    ("Creative practice", "Drawing"), ("Creative practice", "Photography"),
+    ("Creative practice", "Writing"),
+    ("Reading habit", "Learning a language"), ("Reading habit", "Focus & attention"),
+    ("Home systems", "Budgeting"), ("Home systems", "Plants & garden"),
+    ("Relationships", "Hosting"), ("Relationships", "Hard conversations"),
+    ("Career skills", "Public speaking"), ("Career skills", "Organisation"),
+]
+
+# A starting board and a couple of routines, so her Today page has shape on
+# day one instead of being three empty panels.
+PARTNER_BOARD = ("My Board", ["To do", "In progress", "Done"])
+PARTNER_ROUTINES = [
+    ("Morning stretch", "morning", 0),
+    ("Drink water", "morning", 1),
+    ("Read before bed", "evening", 0),
+]
 
 
 DEFAULT_SETTINGS = {
@@ -765,6 +872,36 @@ def _seed_profiles(conn):
             )
 
 
+def _seed_partner_content(conn):
+    """
+    Give the partner profile something to look at: a board, a few routines,
+    and her own starter tree. Only runs when she has none - once she edits
+    or deletes any of it, this never fires again.
+    """
+    has_board = conn.execute(
+        "SELECT COUNT(*) FROM boards WHERE profile_id='partner'"
+    ).fetchone()[0]
+    if has_board == 0:
+        title, lists = PARTNER_BOARD
+        cur = conn.execute(
+            "INSERT INTO boards (title,position,profile_id) VALUES (?,0,'partner')", (title,)
+        )
+        for i, name in enumerate(lists):
+            conn.execute(
+                "INSERT INTO lists (board_id,title,position) VALUES (?,?,?)",
+                (cur.lastrowid, name, i),
+            )
+
+    has_routines = conn.execute(
+        "SELECT COUNT(*) FROM routines WHERE profile_id='partner'"
+    ).fetchone()[0]
+    if has_routines == 0:
+        conn.executemany(
+            "INSERT INTO routines (name,time_group,position,profile_id) VALUES (?,?,?,'partner')",
+            PARTNER_ROUTINES,
+        )
+
+
 def init_db():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -777,8 +914,13 @@ def init_db():
         conn.executescript(SEED)
 
     _migrate(conn)
-    _seed_growth(conn)
     _seed_profiles(conn)   # safe on every start; all inserts are OR IGNORE
+
+    # Each profile owns its own attributes and tree (v6). Both calls no-op
+    # once that profile has content.
+    _seed_growth(conn, "primary")
+    _seed_growth(conn, "partner", PARTNER_ATTRIBUTES, PARTNER_NODES, PARTNER_EDGES)
+    _seed_partner_content(conn)
 
     conn.commit()
     conn.close()

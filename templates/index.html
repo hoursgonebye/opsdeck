@@ -8,8 +8,19 @@
 </head>
 <body>
 
+<!-- Mobile-only top bar. On a phone the sidebar becomes an off-canvas
+     drawer, so this is the persistent chrome: menu, brand, profile switch. -->
+<header class="mobile-bar" id="mobile-bar">
+  <button class="mb-btn" id="mb-menu" aria-label="Menu" aria-expanded="false">
+    <span class="mb-burger"></span>
+  </button>
+  <span class="mb-title" id="mb-title">Today</span>
+  <div class="mb-profiles" id="mb-profiles"></div>
+</header>
+<div class="drawer-backdrop" id="drawer-backdrop"></div>
+
 <div class="shell">
-  <nav class="sidebar">
+  <nav class="sidebar" id="sidebar">
     <div class="sidebar-head">
       <span class="brand-mark">&gt;_</span>
       <span class="brand-name">OPS DECK</span>

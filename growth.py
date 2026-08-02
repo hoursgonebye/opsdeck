@@ -44,33 +44,41 @@ def skill_xp(tier, level):
 
 # ------------------------------------------------------------------ XP
 
-def xp_for_range(conn, start_iso, end_iso):
+def xp_for_range(conn, start_iso, end_iso, profile_id="primary"):
     """
     XP earned in [start, end). Returns a per-source breakdown so you can see
     what actually drove a good week rather than just that it was good.
+
+    Scoped per profile (v6): routines and boards join up to their owner, and
+    skill levels join through skill_nodes.
     """
     routines = conn.execute(
-        "SELECT COUNT(*) FROM routine_completions WHERE local_date >= ? AND local_date < ?",
-        (start_iso, end_iso),
+        "SELECT COUNT(*) FROM routine_completions rc JOIN routines r ON r.id = rc.routine_id "
+        "WHERE rc.local_date >= ? AND rc.local_date < ? AND r.profile_id = ?",
+        (start_iso, end_iso, profile_id),
     ).fetchone()[0]
 
     cards = conn.execute(
-        "SELECT COUNT(*) FROM cards WHERE completed = 1 AND completed_at IS NOT NULL "
-        "AND date(completed_at) >= ? AND date(completed_at) < ?",
-        (start_iso, end_iso),
+        "SELECT COUNT(*) FROM cards c "
+        "JOIN lists l ON l.id = c.list_id JOIN boards b ON b.id = l.board_id "
+        "WHERE c.completed = 1 AND c.completed_at IS NOT NULL "
+        "AND date(c.completed_at) >= ? AND date(c.completed_at) < ? AND b.profile_id = ?",
+        (start_iso, end_iso, profile_id),
     ).fetchone()[0]
 
     checklist = conn.execute(
-        "SELECT COUNT(*) FROM checklist_items WHERE done = 1 AND done_at IS NOT NULL "
-        "AND date(done_at) >= ? AND date(done_at) < ?",
-        (start_iso, end_iso),
+        "SELECT COUNT(*) FROM checklist_items ci JOIN cards c ON c.id = ci.card_id "
+        "JOIN lists l ON l.id = c.list_id JOIN boards b ON b.id = l.board_id "
+        "WHERE ci.done = 1 AND ci.done_at IS NOT NULL "
+        "AND date(ci.done_at) >= ? AND date(ci.done_at) < ? AND b.profile_id = ?",
+        (start_iso, end_iso, profile_id),
     ).fetchone()[0]
 
     skill_rows = conn.execute(
         "SELECT sl.level, n.tier FROM skill_levels sl "
         "JOIN skill_nodes n ON n.id = sl.node_id "
-        "WHERE sl.local_date >= ? AND sl.local_date < ?",
-        (start_iso, end_iso),
+        "WHERE sl.local_date >= ? AND sl.local_date < ? AND n.profile_id = ?",
+        (start_iso, end_iso, profile_id),
     ).fetchall()
     skills_xp = sum(skill_xp(r["tier"], r["level"]) for r in skill_rows)
 
@@ -92,7 +100,7 @@ def xp_for_range(conn, start_iso, end_iso):
     }
 
 
-def weekly_xp(conn, weeks=12):
+def weekly_xp(conn, weeks=12, profile_id="primary"):
     """
     The last `weeks` weeks, oldest first, each with a source breakdown and a
     trailing average so one bad week doesn't read as collapse.
@@ -102,7 +110,7 @@ def weekly_xp(conn, weeks=12):
     for i in range(weeks - 1, -1, -1):
         start = this_monday - timedelta(weeks=i)
         end = start + timedelta(days=7)
-        row = xp_for_range(conn, start.isoformat(), end.isoformat())
+        row = xp_for_range(conn, start.isoformat(), end.isoformat(), profile_id)
         row["week_start"] = start.isoformat()
         row["is_current"] = i == 0
         out.append(row)
@@ -121,7 +129,7 @@ def weekly_xp(conn, weeks=12):
 
 # ------------------------------------------------------- attributes
 
-def attribute_values(conn, as_of=None):
+def attribute_values(conn, as_of=None, profile_id="primary"):
     """
     Current (or historical) attribute totals.
 
@@ -133,12 +141,13 @@ def attribute_values(conn, as_of=None):
         "SELECT sl.node_id, sl.level, n.tier, w.attribute_key, w.weight "
         "FROM skill_levels sl "
         "JOIN skill_nodes n ON n.id = sl.node_id "
-        "JOIN node_weights w ON w.node_id = sl.node_id"
+        "JOIN node_weights w ON w.node_id = sl.node_id "
+        "WHERE n.profile_id = ?"
     )
-    params = ()
+    params = [profile_id]
     if as_of:
-        sql += " WHERE sl.local_date <= ?"
-        params = (as_of,)
+        sql += " AND sl.local_date <= ?"
+        params.append(as_of)
 
     totals = defaultdict(float)
     for r in conn.execute(sql, params):
@@ -146,7 +155,9 @@ def attribute_values(conn, as_of=None):
         totals[r["attribute_key"]] += r["weight"] * (1 + 0.5 * (r["tier"] - 1))
 
     attrs = []
-    for a in conn.execute("SELECT * FROM attributes ORDER BY position, id"):
+    for a in conn.execute(
+        "SELECT * FROM attributes WHERE profile_id=? ORDER BY position, id", (profile_id,)
+    ):
         attrs.append({
             "key": a["key"],
             "name": a["name"],
@@ -156,7 +167,7 @@ def attribute_values(conn, as_of=None):
     return attrs
 
 
-def attribute_history(conn, weeks=12):
+def attribute_history(conn, weeks=12, profile_id="primary"):
     """Attribute shape at the end of each of the last `weeks` weeks."""
     this_monday = week_start(today_local())
     out = []
@@ -165,7 +176,8 @@ def attribute_history(conn, weeks=12):
         as_of = (start + timedelta(days=6)).isoformat()
         out.append({
             "week_start": start.isoformat(),
-            "attributes": {a["key"]: a["value"] for a in attribute_values(conn, as_of)},
+            "attributes": {a["key"]: a["value"]
+                           for a in attribute_values(conn, as_of, profile_id)},
         })
     return out
 
@@ -179,23 +191,28 @@ def node_locked(node, attr_map):
     return attr_map.get(node["unlock_attr"], 0.0) < node["unlock_value"]
 
 
-def load_tree(conn):
+def load_tree(conn, profile_id="primary"):
     """
     The full tree with derived state: per-node weights, lock status, and
-    whether each node is currently mid-attempt.
+    whether each node is currently mid-attempt. Scoped to one profile - each
+    person's tree, attributes and attempt queue are their own.
     """
-    attrs = attribute_values(conn)
+    attrs = attribute_values(conn, profile_id=profile_id)
     attr_map = {a["key"]: a["value"] for a in attrs}
 
     weights = defaultdict(list)
-    for r in conn.execute("SELECT * FROM node_weights"):
+    for r in conn.execute(
+        "SELECT w.* FROM node_weights w JOIN skill_nodes n ON n.id = w.node_id "
+        "WHERE n.profile_id = ?", (profile_id,)
+    ):
         weights[r["node_id"]].append({"attribute_key": r["attribute_key"], "weight": r["weight"]})
 
     pending = {
         r["node_id"]: r["id"]
         for r in conn.execute(
             "SELECT id, node_id FROM levelup_attempts "
-            "WHERE status IN ('awaiting_questions','awaiting_answer','grading')"
+            "WHERE status IN ('awaiting_questions','awaiting_answer','grading') "
+            "AND profile_id = ?", (profile_id,)
         )
     }
 
@@ -205,12 +222,14 @@ def load_tree(conn):
         r["node_id"]: r["c"]
         for r in conn.execute(
             "SELECT node_id, COUNT(*) AS c FROM levelup_attempts "
-            "WHERE status='rejected' GROUP BY node_id"
+            "WHERE status='rejected' AND profile_id=? GROUP BY node_id", (profile_id,)
         )
     }
 
     nodes = []
-    for r in conn.execute("SELECT * FROM skill_nodes ORDER BY id"):
+    for r in conn.execute(
+        "SELECT * FROM skill_nodes WHERE profile_id=? ORDER BY id", (profile_id,)
+    ):
         n = dict(r)
         n["weights"] = weights.get(n["id"], [])
         n["locked"] = node_locked(n, attr_map)
@@ -219,7 +238,14 @@ def load_tree(conn):
         n["xp_next"] = skill_xp(n["tier"], n["level"] + 1) if n["level"] < n["max_level"] else None
         nodes.append(n)
 
-    edges = [dict(r) for r in conn.execute("SELECT * FROM skill_edges")]
+    # Edges inherit scope from their endpoints: only keep an edge if both
+    # ends belong to this profile.
+    edges = [dict(r) for r in conn.execute(
+        "SELECT e.* FROM skill_edges e "
+        "JOIN skill_nodes a ON a.id = e.from_id "
+        "JOIN skill_nodes b ON b.id = e.to_id "
+        "WHERE a.profile_id = ? AND b.profile_id = ?", (profile_id, profile_id)
+    )]
 
     return {
         "nodes": nodes,
@@ -251,13 +277,14 @@ def grant_level(conn, node_id, attempt_id=None):
     return new_level
 
 
-def newly_unlocked(conn, before_attrs, after_attrs):
+def newly_unlocked(conn, before_attrs, after_attrs, profile_id="primary"):
     """Nodes that crossed their unlock threshold between two attribute states."""
     before = {a["key"]: a["value"] for a in before_attrs}
     after = {a["key"]: a["value"] for a in after_attrs}
     out = []
     for r in conn.execute(
-        "SELECT * FROM skill_nodes WHERE unlock_attr IS NOT NULL AND unlock_value IS NOT NULL"
+        "SELECT * FROM skill_nodes WHERE unlock_attr IS NOT NULL "
+        "AND unlock_value IS NOT NULL AND profile_id = ?", (profile_id,)
     ):
         n = dict(r)
         if node_locked(n, before) and not node_locked(n, after):
@@ -275,7 +302,10 @@ def verification_difficulty(conn, node):
     attributes this node feeds - so a Pentest node gets harder to level as
     Pentest grows, rather than verification flattening out over time.
     """
-    attr_map = {a["key"]: a["value"] for a in attribute_values(conn)}
+    # The node knows which profile it belongs to, so difficulty is measured
+    # against that person's attributes - not a shared pool.
+    owner = node["profile_id"] if "profile_id" in node.keys() else "primary"
+    attr_map = {a["key"]: a["value"] for a in attribute_values(conn, profile_id=owner)}
     weights = conn.execute(
         "SELECT attribute_key, weight FROM node_weights WHERE node_id=?", (node["id"],)
     ).fetchall()
@@ -296,7 +326,8 @@ def verification_difficulty(conn, node):
 
 def build_context(conn, node, difficulty):
     """Everything the mentor needs to write good questions for this node."""
-    attrs = attribute_values(conn)
+    owner = node["profile_id"] if "profile_id" in node.keys() else "primary"
+    attrs = attribute_values(conn, profile_id=owner)
     weights = [
         dict(r) for r in conn.execute(
             "SELECT attribute_key, weight FROM node_weights WHERE node_id=?", (node["id"],)

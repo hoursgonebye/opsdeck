@@ -1044,3 +1044,121 @@ a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-vis
   .wall-compose { flex-direction: column; }
   .wall-compose textarea { width: 100%; }
 }
+
+/* ==================== mobile shell (v6) ====================
+   On a phone the old layout stacked profile bar + search + a
+   horizontally-scrolling nav + footer above every screen, so you scrolled
+   past ~200px of chrome to reach content. Now: a compact sticky top bar,
+   and the sidebar becomes an off-canvas drawer. */
+
+.mobile-bar { display: none; }
+.drawer-backdrop { display: none; }
+
+@media (max-width: 720px) {
+  .mobile-bar {
+    display: flex; align-items: center; gap: 10px;
+    position: sticky; top: 0; z-index: 60;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 8px 12px; min-height: 52px;
+  }
+  .mb-btn {
+    background: none; border: 1px solid var(--border); border-radius: 7px;
+    width: 38px; height: 38px; display: grid; place-items: center;
+    cursor: pointer; flex: none; padding: 0;
+  }
+  /* Three-line burger that becomes an X when the drawer is open. */
+  .mb-burger, .mb-burger::before, .mb-burger::after {
+    display: block; width: 17px; height: 2px; background: var(--text);
+    border-radius: 2px; transition: transform .2s, opacity .2s;
+  }
+  .mb-burger { position: relative; }
+  .mb-burger::before, .mb-burger::after { content: ""; position: absolute; left: 0; }
+  .mb-burger::before { top: -6px; }
+  .mb-burger::after  { top: 6px; }
+  .drawer-open .mb-burger { background: transparent; }
+  .drawer-open .mb-burger::before { transform: translateY(6px) rotate(45deg); }
+  .drawer-open .mb-burger::after  { transform: translateY(-6px) rotate(-45deg); }
+
+  .mb-title {
+    font-family: var(--font-mono); font-size: 14px; flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    text-transform: capitalize;
+  }
+  /* Avatars only on mobile - names would push the bar over one line. */
+  .mb-profiles { display: flex; gap: 6px; flex: none; }
+  .mb-profiles .profile-avatar {
+    width: 30px; height: 30px; font-size: 11px; cursor: pointer;
+    opacity: .45; transition: opacity .15s, box-shadow .15s;
+  }
+  .mb-profiles .profile-avatar.active { opacity: 1; box-shadow: 0 0 0 2px var(--amber); }
+
+  /* ---- the drawer ---- */
+  .shell { flex-direction: row; }
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 70;
+    width: 268px; max-width: 84vw;
+    transform: translateX(-100%);
+    transition: transform .22s ease;
+    overflow-y: auto; overscroll-behavior: contain;
+    border-right: 1px solid var(--border);
+    box-shadow: 2px 0 18px rgba(0,0,0,.45);
+    padding: 16px 0;
+  }
+  .drawer-open .sidebar { transform: translateX(0); }
+
+  .drawer-backdrop {
+    display: block; position: fixed; inset: 0; z-index: 65;
+    background: rgba(0,0,0,.55);
+    opacity: 0; pointer-events: none; transition: opacity .22s;
+  }
+  .drawer-open .drawer-backdrop { opacity: 1; pointer-events: auto; }
+  body.drawer-open { overflow: hidden; }
+
+  /* Inside the drawer the nav is vertical again, with real touch targets. */
+  .node-tree { display: block; overflow: visible; }
+  .node { padding: 12px 20px; font-size: 14.5px; }
+  .node.active { border-right: 3px solid var(--amber); border-bottom: none; }
+  .profile-bar { padding: 10px 16px 6px; }
+  .sidebar-foot { padding: 14px 16px 0; }
+
+  .panel { padding: 18px 14px 40px; }
+  .section-title { font-size: 19px; }
+  .section-head-row { flex-direction: column; align-items: stretch; gap: 10px; }
+  .head-actions { flex-wrap: wrap; }
+  .head-actions .btn { flex: 1; min-width: 0; }
+
+  /* Touch targets: 38px minimum on anything tappable. */
+  .btn { padding: 9px 14px; }
+  .btn.small, .btn.tiny { padding: 7px 11px; font-size: 12px; }
+  .icon-btn { min-width: 34px; min-height: 34px; }
+  .check, .check.small { min-width: 22px; min-height: 22px; }
+
+  /* Joint tab breathes better in one column on a phone. */
+  .joint-grid { grid-template-columns: 1fr; gap: 10px; }
+  .joint-card { padding: 14px; margin-bottom: 10px; }
+  .joint-subnav { overflow-x: auto; padding-bottom: 4px; }
+  .joint-subnav .board-tab { flex: none; }
+  .ping-btn { min-width: 0; flex: 1 1 46%; }
+  .xp-level { font-size: 30px; }
+  .cd-days { font-size: 34px; }
+  .companion-art { font-size: 40px; }
+
+  /* Today's rows wrap instead of squeezing the title to nothing. */
+  .today-row { flex-wrap: wrap; row-gap: 3px; }
+  .today-meta { width: 100%; }
+  .theme-grid { grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); }
+  .settings-block { padding: 14px; }
+}
+
+/* Very small phones: drop the second column everywhere. */
+@media (max-width: 400px) {
+  .mb-title { display: none; }        /* avatars + burger only */
+  .ping-btn { flex: 1 1 100%; }
+  .theme-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* Respect users who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .drawer-backdrop, .mb-burger,
+  .mb-burger::before, .mb-burger::after { transition: none !important; }
+}

@@ -281,13 +281,15 @@ def apply_proposal(conn, proposal):
                      a.get("due_at"), pos),
                 )
             elif op == "create_node":
+                owner = a.get("profile_id") or (
+                    proposal["profile_id"] if "profile_id" in proposal.keys() else "primary")
                 cur = conn.execute(
                     """INSERT INTO skill_nodes (title,description,domain,x,y,tier,max_level,
-                                                unlock_attr,unlock_value)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                                                unlock_attr,unlock_value,profile_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (a["title"], a.get("description", ""), a.get("domain", "general"),
                      a.get("x", 0), a.get("y", 0), a.get("tier", 1), a.get("max_level", 5),
-                     a.get("unlock_attr"), a.get("unlock_value")),
+                     a.get("unlock_attr"), a.get("unlock_value"), owner),
                 )
                 nid = cur.lastrowid
                 for w in a.get("weights", []):
@@ -319,9 +321,39 @@ def apply_proposal(conn, proposal):
                 )
             elif op == "create_routine":
                 conn.execute(
-                    "INSERT INTO routines (name,time_group,notes) VALUES (?,?,?)",
-                    (a["name"], a.get("time_group", "anytime"), a.get("notes", "")),
+                    "INSERT INTO routines (name,time_group,notes,profile_id) VALUES (?,?,?,?)",
+                    (a["name"], a.get("time_group", "anytime"), a.get("notes", ""),
+                     a.get("profile_id", proposal["profile_id"] if "profile_id" in proposal.keys() else "primary")),
                 )
+
+            # ---- destructive ops -------------------------------------
+            # These delete rows for real. They still route through the
+            # proposal queue, so nothing here runs until the user has read a
+            # plain-language summary and approved it. FK cascades mean
+            # deleting a parent takes its children (a board takes its lists
+            # and cards) - that is intended, and is why the summary should
+            # say so.
+            elif op == "delete_card":
+                conn.execute("DELETE FROM cards WHERE id=?", (a["card_id"],))
+            elif op == "delete_list":
+                conn.execute("DELETE FROM lists WHERE id=?", (a["list_id"],))
+            elif op == "delete_board":
+                conn.execute("DELETE FROM boards WHERE id=?", (a["board_id"],))
+            elif op == "delete_node":
+                conn.execute("DELETE FROM skill_nodes WHERE id=?", (a["node_id"],))
+            elif op == "delete_routine":
+                conn.execute("DELETE FROM routines WHERE id=?", (a["routine_id"],))
+            elif op == "delete_doc":
+                conn.execute("DELETE FROM docs WHERE id=?", (a["doc_id"],))
+            elif op == "delete_event":
+                conn.execute("DELETE FROM events WHERE id=?", (a["event_id"],))
+            elif op == "delete_label":
+                conn.execute("DELETE FROM labels WHERE id=?", (a["label_id"],))
+            elif op == "delete_checklist_item":
+                conn.execute("DELETE FROM checklist_items WHERE id=?", (a["item_id"],))
+            elif op == "delete_attribute":
+                conn.execute("DELETE FROM attributes WHERE id=?", (a["attribute_id"],))
+
             else:
                 errors.append(f"unknown op: {op}")
                 continue

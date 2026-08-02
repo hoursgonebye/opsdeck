@@ -88,14 +88,19 @@ The app runs three profiles in one instance:
 | Profile | Purpose |
 |---|---|
 | `primary` | The original owner. All pre-v5 data belongs here. |
-| `partner` | A second person. Same app, their own boards/calendar/routines/docs, their own theme. |
+| `partner` | A second person. Same app, their own boards/calendar/routines/docs, **their own skill tree, attributes and mentor queue**, their own theme. |
 | `joint` | A pseudo-user that owns shared content, plus the "Us" features. |
 
-Switching profiles is a tab in the sidebar. Every API call carries an
-`X-Profile-Id` header and the server scopes content to it. A profile's
-`enabled_modules` setting controls which sections even appear — the partner
-profile ships without the skill tree, with **no code fork**, just a
-different list.
+Switching profiles is a tab in the sidebar (a compact avatar switcher on
+mobile). Every API call carries an `X-Profile-Id` header and the server
+scopes content to it — including the skill tree, so two people track
+entirely different skills without seeing each other's — the primary profile
+holds a ~450-node cybersecurity map, the partner a 20-node starter tree of
+her own with a different stat set entirely.
+
+A profile's `enabled_modules` setting controls which sections even appear,
+so a tab can drop a whole feature with **no code fork** — just a different
+list.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md#profiles-and-scoping) for why
 scoping is a header rather than a URL segment.

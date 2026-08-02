@@ -21,8 +21,42 @@ function go(section) {
   document.querySelectorAll(".node").forEach((n) =>
     n.classList.toggle("active", n.dataset.section === section));
   location.hash = section;
+  // Navigating always closes the mobile drawer - leaving it open over the
+  // page you just asked for is the classic off-canvas annoyance.
+  closeDrawer();
+  syncMobileTitle(section);
   SECTIONS[section]();
 }
+
+// ---------- Mobile drawer ----------
+function openDrawer() {
+  document.body.classList.add("drawer-open");
+  el("mb-menu")?.setAttribute("aria-expanded", "true");
+}
+function closeDrawer() {
+  document.body.classList.remove("drawer-open");
+  el("mb-menu")?.setAttribute("aria-expanded", "false");
+}
+function toggleDrawer() {
+  document.body.classList.contains("drawer-open") ? closeDrawer() : openDrawer();
+}
+
+function syncMobileTitle(section) {
+  const t = el("mb-title");
+  if (!t) return;
+  const labels = {
+    today: "Today", board: "Boards", calendar: "Calendar", routines: "Routines",
+    docs: "Docs", tree: "Skill tree", thm: "TryHackMe", growth: "Growth",
+    chat: "Mentor", joint: "Us", settings: "Settings",
+  };
+  t.textContent = labels[section] || section;
+}
+
+el("mb-menu")?.addEventListener("click", toggleDrawer);
+el("drawer-backdrop")?.addEventListener("click", closeDrawer);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeDrawer();
+});
 
 el("node-tree").addEventListener("click", (e) => {
   const node = e.target.closest(".node");

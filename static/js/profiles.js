@@ -42,18 +42,35 @@ async function loadActiveSettings() {
 }
 
 function renderProfileBar() {
-  const bar = el("profile-bar");
-  if (!bar) return;
   const active = window.OPSDECK.activeProfile;
-  bar.innerHTML = window.OPSDECK.profiles.map((p) => `
-    <button class="profile-tab ${p.id === active ? "active" : ""}" data-profile="${p.id}">
-      <span class="profile-avatar type-${esc(p.type)}">${esc(initials(p.display_name))}</span>
-      <span class="profile-name">${esc(p.display_name)}</span>
-    </button>`).join("");
+  const profiles = window.OPSDECK.profiles || [];
 
-  bar.querySelectorAll(".profile-tab").forEach((btn) => {
-    btn.addEventListener("click", () => switchProfile(btn.dataset.profile));
-  });
+  const bar = el("profile-bar");
+  if (bar) {
+    bar.innerHTML = profiles.map((p) => `
+      <button class="profile-tab ${p.id === active ? "active" : ""}" data-profile="${p.id}">
+        <span class="profile-avatar type-${esc(p.type)}">${esc(initials(p.display_name))}</span>
+        <span class="profile-name">${esc(p.display_name)}</span>
+      </button>`).join("");
+    bar.querySelectorAll(".profile-tab").forEach((btn) =>
+      btn.addEventListener("click", () => switchProfile(btn.dataset.profile)));
+  }
+
+  // Mobile top bar: avatars only, no names - the bar has to stay one line.
+  const mb = el("mb-profiles");
+  if (mb) {
+    mb.innerHTML = profiles.map((p) => `
+      <span class="profile-avatar type-${esc(p.type)} ${p.id === active ? "active" : ""}"
+            data-profile="${p.id}" role="button" tabindex="0"
+            title="${escAttr(p.display_name)}">${esc(initials(p.display_name))}</span>`).join("");
+    mb.querySelectorAll("[data-profile]").forEach((a) => {
+      const go = () => switchProfile(a.dataset.profile);
+      a.addEventListener("click", go);
+      a.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
+      });
+    });
+  }
 }
 
 function initials(name) {

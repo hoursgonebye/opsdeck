@@ -130,10 +130,21 @@ for free. Only genuinely new behaviour (merging two calendars, relationship
 XP, the wall) needed new code.
 
 Tables carrying `profile_id`: `boards`, `events`, `routines`, `docs`,
-`quick_notes`. Child rows (`lists`, `cards`, `checklist_items`,
-`routine_completions`, `doc_tags`) inherit scope through their parent —
-adding a redundant `profile_id` to `cards` would create the possibility of a
-card whose profile disagrees with its board's.
+`quick_notes` (v5), plus `skill_nodes`, `attributes`, `levelup_attempts`,
+`ai_proposals` and `thm_completions` (v6). Child rows (`lists`, `cards`,
+`checklist_items`, `routine_completions`, `doc_tags`, `node_weights`,
+`skill_edges`, `skill_levels`) inherit scope through their parent — adding a
+redundant `profile_id` to `cards` would create the possibility of a card
+whose profile disagrees with its board's.
+
+**v6 made the growth system per-profile**, which matters more than it
+sounds: two people tracking skills in one app should not share a tree, a
+stat set, or a verification queue. The primary profile's ~450-node
+cybersecurity map would be meaningless to someone not doing security, so the
+partner gets her own seed (six broad attributes — wellbeing, craft, mind,
+home, people, work) rather than inheriting his. `skill_edges` are filtered by
+requiring *both* endpoints to belong to the profile, so a stray cross-profile
+edge can never leak a node into the wrong tree.
 
 ### Why a header, not a URL segment
 
