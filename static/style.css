@@ -1231,3 +1231,49 @@ a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-vis
   .cd-add input[type=date] { width: 100%; }
   .home-card .field-row-inline .btn { flex: 1; }
 }
+
+/* ---- Health ----
+   Today's number against your own trailing average, not a generic goal.
+   "≈ usual" is deliberately as prominent as a delta - most days are normal
+   days and that shouldn't read as a failure to hit a target. */
+.h-tiles {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px; margin-bottom: 14px;
+}
+.h-tile { text-align: center; padding: 14px 10px; }
+.h-label {
+  font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--text-muted);
+}
+.h-value { font-size: 25px; font-weight: 700; margin: 5px 0 3px; line-height: 1.1; }
+.h-sub { font-size: 11.5px; color: var(--text-muted); }
+.h-delta { margin-left: 5px; font-weight: 600; }
+.h-delta.up   { color: var(--green); }
+.h-delta.down { color: var(--amber); }
+.h-delta.flat { color: var(--text-muted); font-weight: 400; }
+
+.h-add .field-row-inline { display: flex; gap: 7px; flex-wrap: wrap; }
+.h-add select { flex: 2 1 170px; min-width: 0; }
+.h-add input[type=number] { flex: 1 1 100px; min-width: 0; }
+.h-add input[type=date] { flex: 1 1 140px; min-width: 0; }
+
+.h-chart-row { margin-bottom: 14px; }
+.h-chart-label {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+  text-transform: capitalize; margin-bottom: 5px;
+}
+.h-bars {
+  display: flex; align-items: flex-end; gap: 2px; height: 54px;
+  background: var(--panel-alt); border-radius: 5px; padding: 4px;
+}
+.h-bar {
+  flex: 1; min-width: 2px; background: var(--amber); border-radius: 2px 2px 0 0;
+  opacity: .75; transition: opacity .12s;
+}
+.h-bar:hover { opacity: 1; }
+
+@media (max-width: 720px) {
+  .h-tiles { grid-template-columns: 1fr 1fr; }
+  .h-add select, .h-add input { flex: 1 1 100%; }
+  .h-value { font-size: 21px; }
+}

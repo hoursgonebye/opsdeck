@@ -258,6 +258,7 @@ design, since it runs on every container start.
 | 3 | TryHackMe tables; `levelup_attempts.room_code` |
 | 4 | `quick_notes` |
 | 5 | **Profiles.** Added `profile_id` to boards/events/routines/docs/quick_notes with `DEFAULT 'primary'` and an index each; created profiles, settings, themes, notifications, and all 11 joint tables; seeded 3 profiles, 10 themes, 6 milestones, and the singletons |
+| 7 | **Health.** Added `health_metrics` (profile-scoped, upsert on `(profile, metric, date, source)`) and `oauth_tokens`. Backfilled `health` into every existing profile's `enabled_modules`, since those rows predate the module |
 | 6 | **Per-profile growth.** Added `profile_id` to `skill_nodes`, `attributes`, `levelup_attempts`, `ai_proposals`, `thm_completions`. Each profile now has its own tree, its own stat set, and its own verification queue. Seeded the partner a 20-node non-technical starter tree with six attributes of her own, plus a board and routines |
 
 The v5 migration is additive only. Every pre-existing row backfills to

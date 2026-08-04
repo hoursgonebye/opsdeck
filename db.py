@@ -19,7 +19,7 @@ DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = DATA_DIR / "opsdeck.db"
 UPLOAD_DIR = DATA_DIR / "uploads"
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # Tables that gain a profile_id in v5. Pre-v5 rows all belong to 'primary'.
 PROFILE_SCOPED_TABLES = ("boards", "events", "routines", "docs", "quick_notes")
@@ -467,6 +467,44 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_notif_profile ON notifications(profile_id, seen);
+
+-- ==================== health (schema v7) ====================
+--
+-- Deliberately provider-agnostic. Google's Health API is the intended
+-- source, but the same table takes a push from Tasker, Home Assistant, an
+-- iOS Shortcut or a curl one-liner - the ingest endpoint does not care.
+--
+-- One row per (profile, metric, day, source). The unique constraint makes
+-- re-syncing a date range idempotent: a second pull of the same day
+-- overwrites rather than duplicating, which matters because step counts
+-- keep changing until the day is over.
+CREATE TABLE IF NOT EXISTS health_metrics (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id  TEXT NOT NULL,
+  metric      TEXT NOT NULL,        -- steps | sleep_minutes | active_minutes | exercise_minutes | weight_kg | resting_hr | distance_km | calories
+  value       REAL NOT NULL,
+  unit        TEXT NOT NULL DEFAULT '',
+  local_date  TEXT NOT NULL,        -- YYYY-MM-DD in OPSDECK_TZ
+  source      TEXT NOT NULL DEFAULT 'manual',
+  recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (profile_id, metric, local_date, source)
+);
+CREATE INDEX IF NOT EXISTS idx_health_lookup ON health_metrics(profile_id, metric, local_date);
+
+-- Refresh tokens for connected providers. Access tokens are short-lived
+-- (Google's are one hour) so the refresh token is the thing worth storing;
+-- the access token is cached alongside it only to avoid refreshing on every
+-- single call.
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  provider      TEXT NOT NULL,
+  profile_id    TEXT NOT NULL,
+  access_token  TEXT NOT NULL DEFAULT '',
+  refresh_token TEXT NOT NULL DEFAULT '',
+  expires_at    TEXT,
+  scope         TEXT NOT NULL DEFAULT '',
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (provider, profile_id)
+);
 """
 
 SEED = """
@@ -634,6 +672,26 @@ def _migrate(conn):
         # attributes two people can both have a 'health' stat.
         conn.execute("DROP INDEX IF EXISTS idx_attributes_key")
 
+    if current < 7:
+        # v7 adds health_metrics and oauth_tokens, both created by SCHEMA
+        # above. No health data exists to migrate, but every profile already
+        # has a settings row written before the Health module existed - so
+        # changing DEFAULT_SETTINGS alone would leave the tab invisible on
+        # every existing profile. Append it to their enabled_modules.
+        for row in conn.execute("SELECT profile_id, settings FROM profile_settings").fetchall():
+            try:
+                cfg = json.loads(row["settings"] or "{}")
+            except (ValueError, TypeError):
+                continue
+            mods = cfg.get("enabled_modules")
+            if isinstance(mods, list) and "health" not in mods:
+                mods.append("health")
+                cfg["enabled_modules"] = mods
+                conn.execute(
+                    "UPDATE profile_settings SET settings=? WHERE profile_id=?",
+                    (json.dumps(cfg), row["profile_id"]),
+                )
+
     conn.execute(
         "INSERT INTO settings (key,value) VALUES ('schema_version',?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -758,14 +816,14 @@ DEFAULT_SETTINGS = {
     "week_start": "monday",
     "timezone": "America/New_York",
     "enabled_modules": ["today", "boards", "calendar", "routines", "docs",
-                        "tree", "thm", "growth", "chat"],
+                        "tree", "thm", "growth", "chat", "health"],
     "notifications": {"routine_reminders": True, "reminder_time": "08:00",
                       "joint_activity": True},
 }
 
 # The partner profile is the same app minus the cybersecurity progression -
 # proof that enabled_modules alone reskins a tab, no code fork required.
-PARTNER_MODULES = ["today", "boards", "calendar", "routines", "docs"]
+PARTNER_MODULES = ["today", "boards", "calendar", "routines", "docs", "health"]
 JOINT_MODULES = ["joint", "calendar", "boards", "routines", "docs"]
 
 SEED_PROFILES = [

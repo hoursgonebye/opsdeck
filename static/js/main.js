@@ -11,6 +11,7 @@ const SECTIONS = {
   growth: renderGrowth,
   chat: renderChat,
   joint: renderJoint,
+  health: renderHealth,
   settings: renderSettings,
 };
 
@@ -47,7 +48,7 @@ function syncMobileTitle(section) {
   const labels = {
     today: "Today", board: "Boards", calendar: "Calendar", routines: "Routines",
     docs: "Docs", tree: "Skill tree", thm: "TryHackMe", growth: "Growth",
-    chat: "Mentor", joint: "Us", settings: "Settings",
+    chat: "Mentor", joint: "Us", health: "Health", settings: "Settings",
   };
   t.textContent = labels[section] || section;
 }

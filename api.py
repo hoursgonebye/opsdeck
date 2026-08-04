@@ -19,6 +19,7 @@ from flask import Blueprint, jsonify, request, send_file, abort, g
 from werkzeug.utils import secure_filename
 
 import growth
+import health
 import mentor
 import quicknote
 import social
@@ -313,6 +314,135 @@ def dismiss_quick_note(nid):
     conn.commit()
     conn.close()
     return jsonify({"dismissed": nid})
+
+
+# ----------------------------------------------------------------- health
+# Ingest is provider-agnostic on purpose: the Google connector is one
+# caller, but a Tasker task or a curl one-liner can POST the same shape.
+
+@api.route("/health", methods=["GET"])
+@require_token
+def get_health():
+    conn = connect()
+    out = {
+        "summary": health.summary(conn, active_profile()),
+        "series": health.series(conn, active_profile(),
+                                int(request.args.get("days", 30)),
+                                request.args.get("metric")),
+        "metrics": health.METRICS,
+        "provider": {
+            "configured": health.configured(),
+            "connected": health.connected(conn, active_profile()),
+        },
+    }
+    conn.close()
+    return jsonify(out)
+
+
+@api.route("/health", methods=["POST"])
+@require_token
+def post_health():
+    """
+    Record one metric, or many. Accepts either:
+        {"metric": "steps", "value": 8400, "date": "2026-08-04"}
+        {"entries": [{...}, {...}]}
+    `date` defaults to today, `source` to 'manual'.
+    """
+    d = body()
+    entries = d.get("entries") or [d]
+    conn = connect()
+    written, errors = 0, []
+    for e in entries:
+        try:
+            health.record(
+                conn, active_profile(), e["metric"], e["value"],
+                local_date=e.get("date"), unit=e.get("unit"),
+                source=e.get("source", "manual"),
+            )
+            written += 1
+        except (KeyError, ValueError, TypeError) as exc:
+            errors.append(str(exc))
+    conn.commit()
+    conn.close()
+    status = 201 if written and not errors else (207 if written else 400)
+    return jsonify({"written": written, "errors": errors}), status
+
+
+@api.route("/health/summary", methods=["GET"])
+@require_token
+def health_summary():
+    conn = connect()
+    out = health.summary(conn, active_profile(), int(request.args.get("days", 7)))
+    conn.close()
+    return jsonify(out)
+
+
+@api.route("/health/connect", methods=["GET"])
+@require_token
+def health_connect():
+    """Returns the Google consent URL for the browser to open."""
+    if not health.configured():
+        return jsonify({"error": "Set OPSDECK_GOOGLE_CLIENT_ID and "
+                                 "OPSDECK_GOOGLE_CLIENT_SECRET, then restart."}), 400
+    # State carries the profile so the callback knows whose tokens these are,
+    # and a nonce so a stray callback cannot bind an unrelated account.
+    nonce = uuid.uuid4().hex
+    conn = connect()
+    _set_setting(conn, f"oauth_state_{nonce}", active_profile())
+    conn.commit()
+    conn.close()
+    return jsonify({"url": health.auth_url(active_profile(), nonce)})
+
+
+@api.route("/health/callback", methods=["GET"])
+def health_callback():
+    """
+    Google redirects the browser here. Deliberately not @require_token - it
+    is a top-level browser navigation and cannot carry the header; the state
+    nonce is what proves the exchange was one we started.
+    """
+    code = request.args.get("code")
+    state = request.args.get("state", "")
+    if not code:
+        return "<h3>Authorisation failed or was cancelled.</h3>", 400
+
+    conn = connect()
+    row = one(conn, "SELECT value FROM settings WHERE key=?", (f"oauth_state_{state}",))
+    if not row:
+        conn.close()
+        return "<h3>Unrecognised or expired authorisation attempt.</h3>", 400
+    profile_id = row["value"]
+    conn.execute("DELETE FROM settings WHERE key=?", (f"oauth_state_{state}",))
+
+    try:
+        health.exchange_code(conn, profile_id, code)
+        conn.commit()
+    except Exception as exc:
+        conn.close()
+        return f"<h3>Token exchange failed:</h3><pre>{exc}</pre>", 502
+    conn.close()
+    return ("<h3>Health connected.</h3>"
+            "<p>You can close this tab and return to Ops Deck.</p>"
+            "<script>setTimeout(()=>window.close(),1500)</script>")
+
+
+@api.route("/health/sync", methods=["POST"])
+@require_token
+def health_sync():
+    conn = connect()
+    out = health.sync(conn, active_profile(), int(body().get("days", 7)))
+    conn.close()
+    return jsonify(out), 200 if out.get("ok") else 400
+
+
+@api.route("/health/disconnect", methods=["POST"])
+@require_token
+def health_disconnect():
+    conn = connect()
+    health.disconnect(conn, active_profile())
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
 
 
 # --------------------------------------------------------- profiles / settings

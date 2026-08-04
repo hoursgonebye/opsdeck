@@ -1,6 +1,6 @@
 # API reference
 
-112 endpoints. Everything the browser UI does goes through these — there is
+134 endpoints. Everything the browser UI does goes through these — there is
 no private API. If you can do it by clicking, you can do it from a script.
 
 ---
@@ -34,10 +34,12 @@ curl -H "X-API-Token: $TOKEN" -H "X-Profile-Id: partner" .../api/boards
 - Valid values come from `GET /api/profiles` (`primary`, `partner`, `joint`).
 - **Omitted or unknown → `primary`.** Pre-v5 scripts keep working unchanged.
 - Scoped resources: boards (and their lists/cards/labels), events, routines,
-  docs, quick notes, notifications, `/today`, `/search`, `/reminders/upcoming`.
-- **Not** scoped: the skill tree, attributes, XP, attempts, TryHackMe,
-  proposals (single-owner subsystems), and everything under `/api/joint`
-  (household-wide by definition).
+  docs, quick notes, notifications, health metrics, `/today`, `/search`,
+  `/reminders/upcoming`, and — since v6 — **the skill tree, attributes, XP,
+  level-up attempts, proposals and TryHackMe completions**. Each profile has
+  its own tree and its own mentor queue.
+- **Not** scoped: everything under `/api/joint`, which is household-wide by
+  definition and ignores the header.
 
 ---
 
@@ -65,13 +67,14 @@ Settings object:
   "color_mode": "auto",
   "week_start": "monday",
   "timezone": "America/New_York",
-  "enabled_modules": ["today","boards","calendar","routines","docs","tree","thm","growth","chat"],
+  "enabled_modules": ["today","boards","calendar","routines","docs","tree","thm","growth","chat","health"],
   "notifications": {"routine_reminders": true, "reminder_time": "08:00", "joint_activity": true}
 }
 ```
 
 `enabled_modules` drives the sidebar. Valid keys: `today`, `boards`,
-`calendar`, `routines`, `docs`, `tree`, `thm`, `growth`, `chat`, `joint`.
+`calendar`, `routines`, `docs`, `tree`, `thm`, `growth`, `chat`, `health`,
+`joint`.
 
 Theme `colors`: `bg`, `surface`, `surface_alt`, `border`, `primary`,
 `accent`, `text`, `text_muted`.
@@ -363,3 +366,42 @@ verdict.
 - Unfiled quick notes wait at GET /api/notes/quick?status=pending — place
   them properly rather than accepting a weak guess.
 ```
+
+## Health
+
+Provider-agnostic. The Google connector is one caller; a Tasker task, a Home
+Assistant automation, an iOS Shortcut or curl can POST the same shape.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/health?days=30&metric=` | Summary + series + provider state |
+| GET | `/api/health/summary?days=7` | Today per metric, with trailing average |
+| POST | `/api/health` | Ingest one reading or a batch |
+| GET | `/api/health/connect` | Returns the Google consent URL |
+| GET | `/api/health/callback` | OAuth redirect target (no token header — browser navigation) |
+| POST | `/api/health/sync` | Pull the last N days from the provider |
+| POST | `/api/health/disconnect` | Drop stored tokens; readings are kept |
+
+Ingest accepts either shape:
+
+```bash
+curl -X POST "$OPSDECK_URL/api/health"   -H "X-API-Token: $OPSDECK_TOKEN" -H 'Content-Type: application/json'   -d '{"metric":"steps","value":8432}'
+
+curl -X POST "$OPSDECK_URL/api/health"   -H "X-API-Token: $OPSDECK_TOKEN" -H 'Content-Type: application/json'   -d '{"entries":[{"metric":"sleep_minutes","value":437,"date":"2026-08-04"},
+                  {"metric":"weight_kg","value":78.4}]}'
+```
+
+`date` defaults to today, `source` to `manual`. Metrics: `steps`,
+`distance_km`, `active_minutes`, `exercise_minutes`, `sleep_minutes`,
+`calories`, `resting_hr`, `weight_kg`.
+
+Writes are **upserts** on `(profile, metric, date, source)` — re-syncing a
+date range overwrites rather than duplicating, which is required because a
+day's step count keeps changing until the day is over. A batch with some
+bad rows returns **207** with a per-row error list.
+
+**On the provider:** Google Fit's REST API is retired and Health Connect is
+on-device only with no cloud API, so neither can be polled from a server.
+The legacy Fitbit Web API can, but sunsets 2026-09-30. This targets the
+Google Health API (`health.googleapis.com/v4`), which is where that data
+moves. Access tokens last one hour, so the refresh token is what's stored.
