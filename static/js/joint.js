@@ -155,17 +155,33 @@ function meProfile() {
 
 const STAGE_ART = ["🌱", "🌿", "🪴", "🌳", "🌸", "🌺", "🌟"];
 
+// Home is a full dashboard rather than a landing page: every shared feature
+// is visible at once with an add-box in place, so nothing is discoverable
+// only by clicking a sub-tab and finding it empty. The sub-tabs remain for
+// working with a section that has real content in it.
 async function jointHome(body) {
-  const [home, xp, mile, fb] = await Promise.all([
-    API.get("/joint/home"),
-    API.get("/joint/relationship-xp"),
-    API.get("/joint/milestones/upcoming"),
-    API.get("/joint/flashback"),
-  ]);
+  const [home, xp, mile, fb, ideas, bucket, songs, prompt, wall, mail, countdowns] =
+    await Promise.all([
+      API.get("/joint/home"),
+      API.get("/joint/relationship-xp"),
+      API.get("/joint/milestones/upcoming"),
+      API.get("/joint/flashback"),
+      API.get("/joint/date-ideas"),
+      API.get("/joint/bucket-list"),
+      API.get("/joint/song-of-day"),
+      API.get("/joint/daily-prompt/today"),
+      API.get("/joint/wall"),
+      API.get("/joint/mailbox"),
+      API.get("/joint/countdowns"),
+    ]);
 
   const pct = xp.level_span ? Math.round((xp.into_level / xp.level_span) * 100) : 0;
   const stage = home.companion.growth_stage || 0;
   const nextMile = mile[0];
+  const nameOf = (id) => {
+    const p = (window.OPSDECK.profiles || []).find((x) => x.id === id);
+    return p ? p.display_name : id;
+  };
 
   const pings = [
     ["thinking_of_you", "💭 Thinking of you"],
@@ -173,6 +189,18 @@ async function jointHome(body) {
     ["proud_of_you", "✨ Proud of you"],
     ["you_got_this", "💪 You got this"],
   ];
+
+  // A card that always renders: content when it has any, a prompt when it
+  // doesn't, and an add-box either way.
+  const card = (title, jump, addHtml, listHtml, empty) => `
+    <div class="joint-card home-card">
+      <div class="block-title-row">
+        <div class="block-title">${title}</div>
+        ${jump ? `<button class="btn tiny" data-jump="${jump}">open</button>` : ""}
+      </div>
+      ${addHtml}
+      <div class="home-list">${listHtml || `<p class="empty-state small">${empty}</p>`}</div>
+    </div>`;
 
   body.innerHTML = `
     <div class="joint-grid">
@@ -195,6 +223,12 @@ async function jointHome(body) {
           ? `<div class="cd-days">${home.next_countdown.days_until}</div>
              <div class="cd-label">days until ${esc(home.next_countdown.label)}</div>`
           : `<div class="cd-empty">No countdowns yet</div>`}
+        <div class="field-row-inline cd-add">
+          <input type="text" id="cd-label-in" placeholder="Anniversary…">
+          <input type="date" id="cd-date-in">
+          <button class="btn tiny" id="cd-add">Add</button>
+        </div>
+        ${countdowns.length > 1 ? `<div class="cd-more">${countdowns.length} tracked</div>` : ""}
       </div>
     </div>
 
@@ -211,8 +245,71 @@ async function jointHome(body) {
         ${fb.wall_posts.map((p) => `<div class="flash-item">📸 ${esc(p.caption || p.content)}</div>`).join("")}
         ${fb.messages.map((m) => `<div class="flash-item">💌 ${esc(m.body)}</div>`).join("")}
         ${fb.date_ideas.map((d) => `<div class="flash-item">💞 ${esc(d.title)}</div>`).join("")}
-      </div>` : ""}`;
+      </div>` : ""}
 
+    <div class="home-cards">
+      ${card("Today's question", "q&a", "",
+        prompt.both_answered
+          ? `<div class="home-q">${esc(prompt.prompt_text)}</div>` +
+            prompt.answers.map((a) => `<div class="home-row"><b>${esc(nameOf(a.profile_id))}:</b> ${esc(a.answer)}</div>`).join("")
+          : `<div class="home-q">${esc(prompt.prompt_text)}</div>
+             <div class="field-row-inline">
+               <input type="text" id="home-answer" placeholder="${prompt.you_answered ? "answered — waiting on them" : "your answer…"}"
+                      ${prompt.you_answered ? "disabled" : ""}>
+               <button class="btn tiny" id="home-answer-go" ${prompt.you_answered ? "disabled" : ""}>Send</button>
+             </div>`,
+        "")}
+
+      ${card("Date jar", "plans", `
+        <div class="field-row-inline">
+          <input type="text" id="home-idea" placeholder="A date idea…">
+          <button class="btn tiny" id="home-idea-go">Add</button>
+          <button class="btn tiny" id="home-idea-draw">🎲</button>
+        </div>
+        <div id="home-idea-drawn"></div>`,
+        ideas.slice(0, 4).map((i) =>
+          `<div class="home-row ${i.status === "done" ? "done" : ""}">${esc(i.title)}</div>`).join(""),
+        "Nothing in the jar yet — add one.")}
+
+      ${card("Bucket list", "plans", `
+        <div class="field-row-inline">
+          <input type="text" id="home-bucket" placeholder="Someday we should…">
+          <button class="btn tiny" id="home-bucket-go">Add</button>
+        </div>`,
+        bucket.slice(0, 4).map((b) =>
+          `<div class="home-row ${b.status === "done" ? "done" : ""}">${esc(b.title)}</div>`).join(""),
+        "No someday-goals yet.")}
+
+      ${card("Song of the day", "q&a", `
+        <div class="field-row-inline">
+          <input type="text" id="home-song" placeholder="Track title…">
+          <button class="btn tiny" id="home-song-go">Add</button>
+        </div>`,
+        songs.slice(0, 4).map((s) =>
+          `<div class="home-row"><span class="card-meta">${fmtDate(s.local_date)}</span> ${esc(s.track_title)}</div>`).join(""),
+        "No songs shared yet.")}
+
+      ${card("Wall", "wall", `
+        <div class="field-row-inline">
+          <input type="text" id="home-wall" placeholder="Post something…">
+          <button class="btn tiny" id="home-wall-go">Post</button>
+        </div>`,
+        wall.slice(0, 3).map((p) =>
+          `<div class="home-row">${esc((p.caption || p.content || "").slice(0, 70))}</div>`).join(""),
+        "Wall's empty.")}
+
+      ${card("Mailbox", "mailbox", `
+        <div class="field-row-inline">
+          <input type="text" id="home-mail" placeholder="A note to send…">
+          <input type="date" id="home-mail-date">
+          <button class="btn tiny" id="home-mail-go">Send</button>
+        </div>`,
+        mail.slice(0, 3).map((m) =>
+          `<div class="home-row"><span class="card-meta">${m.delivered ? "sent" : "scheduled"}</span> ${esc(m.body.slice(0, 60))}</div>`).join(""),
+        "No messages waiting.")}
+    </div>`;
+
+  // ---- wiring ----
   el("companion-pet").addEventListener("click", async () => {
     try { await API.post("/joint/companion/interact", {}); toast("💚 boosted"); renderJoint(); }
     catch (e) { /* toasted (cooldown 429) */ }
@@ -222,6 +319,55 @@ async function jointHome(body) {
       await API.post("/joint/ping", { from_profile_id: meProfile(), to_profile_id: otherProfile(), kind: b.dataset.ping });
       toast("Ping sent 💛");
     }));
+  body.querySelectorAll("[data-jump]").forEach((b) =>
+    b.addEventListener("click", () => { jointTab = b.dataset.jump; renderJoint(); }));
+
+  // Small helper: read an input, POST, re-render. Enter submits too.
+  const wire = (btnId, inputId, fn) => {
+    const btn = el(btnId), input = el(inputId);
+    if (!btn || !input) return;
+    const go = async () => {
+      const v = input.value.trim();
+      if (!v) return;
+      try { await fn(v); renderJoint(); } catch (e) { /* toasted */ }
+    };
+    btn.addEventListener("click", go);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); go(); }
+    });
+  };
+
+  wire("home-idea-go", "home-idea", (v) =>
+    API.post("/joint/date-ideas", { created_by: meProfile(), title: v }));
+  wire("home-bucket-go", "home-bucket", (v) =>
+    API.post("/joint/bucket-list", { title: v }));
+  wire("home-song-go", "home-song", (v) =>
+    API.post("/joint/song-of-day", { profile_id: meProfile(), track_title: v }));
+  wire("home-wall-go", "home-wall", (v) =>
+    API.post("/joint/wall", { profile_id: meProfile(), type: "text", content: v }));
+  wire("home-answer-go", "home-answer", (v) =>
+    API.post(`/joint/daily-prompt/${prompt.id}/answer`, { profile_id: meProfile(), answer: v }));
+  wire("home-mail-go", "home-mail", (v) => {
+    const when = el("home-mail-date").value;
+    return API.post("/joint/mailbox", {
+      from_profile_id: meProfile(), to_profile_id: otherProfile(), body: v,
+      deliver_at: when ? `${when} 09:00:00` : undefined,
+    });
+  });
+  wire("cd-add", "cd-label-in", (v) => {
+    const when = el("cd-date-in").value;
+    if (!when) { toast("Pick a date for the countdown", "error"); throw new Error("no date"); }
+    return API.post("/joint/countdowns", { label: v, target_date: when });
+  });
+
+  el("home-idea-draw")?.addEventListener("click", async () => {
+    try {
+      const r = await API.post("/joint/date-ideas/random", {});
+      el("home-idea-drawn").innerHTML = `<div class="drawn">🎁 ${esc(r.title)}</div>`;
+    } catch (e) {
+      el("home-idea-drawn").innerHTML = `<div class="drawn">Nothing to draw — add ideas first.</div>`;
+    }
+  });
 }
 
 async function jointWall(body) {

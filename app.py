@@ -7,6 +7,7 @@ shell page and the service worker.
 """
 import os
 import secrets
+from pathlib import Path
 
 from flask import Flask, render_template, send_from_directory
 
@@ -25,12 +26,33 @@ app.config["MAX_CONTENT_LENGTH"] = (
 ) * 1024 * 1024
 
 
+def asset_version():
+    """
+    A fingerprint of the current static assets, appended to every script and
+    stylesheet URL as ?v=...
+
+    Without it a browser can keep serving JS from a previous deploy - the
+    server sends no-cache and the right ETag, but a copy cached earlier under
+    different headers still wins, and the symptom is a UI that silently
+    lacks whatever was just shipped. Changing the URL sidesteps the question
+    entirely. Computed per request because the dev server reloads in place;
+    it is a handful of stat() calls on ~15 files.
+    """
+    static_dir = Path(app.static_folder)
+    latest = 0.0
+    for path in static_dir.rglob("*"):
+        if path.is_file():
+            latest = max(latest, path.stat().st_mtime)
+    return str(int(latest))
+
+
 @app.route("/")
 def index():
     # The token is embedded in the page so the UI can call its own API.
     # Anyone who can load this page could already read it from devtools -
     # the real boundary is Tailscale plus the token on the API itself.
-    return render_template("index.html", api_token=API_TOKEN, tz=TZ_NAME)
+    return render_template("index.html", api_token=API_TOKEN, tz=TZ_NAME,
+                           v=asset_version())
 
 
 @app.route("/sw.js")

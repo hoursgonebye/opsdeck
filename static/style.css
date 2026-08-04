@@ -1194,3 +1194,40 @@ a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-vis
   .joint-cal-head { flex-direction: column; align-items: stretch; }
   .joint-cal-head .head-actions .btn { flex: 1; }
 }
+
+/* ---- Us: home dashboard ----
+   Every shared feature visible at once with an add-box in place, so nothing
+   is discoverable only by opening a sub-tab and finding it blank. */
+.home-cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 12px; margin-top: 12px;
+}
+.home-card { display: flex; flex-direction: column; gap: 9px; }
+.home-card .field-row-inline { display: flex; gap: 6px; }
+.home-card .field-row-inline input[type=text] { flex: 1; min-width: 0; }
+.home-card .field-row-inline input[type=date] { flex: none; width: 140px; }
+
+.home-list { display: flex; flex-direction: column; gap: 4px; }
+.home-row {
+  font-size: 13px; line-height: 1.45; padding: 4px 7px; border-radius: 5px;
+  background: var(--panel-alt); overflow: hidden; text-overflow: ellipsis;
+}
+.home-row.done { opacity: .5; text-decoration: line-through; }
+.home-row .card-meta { font-family: var(--font-mono); font-size: 10.5px; margin-right: 6px; }
+.home-q {
+  font-size: 13.5px; line-height: 1.5; padding-left: 10px;
+  border-left: 2px solid var(--amber); color: var(--text); margin-bottom: 2px;
+}
+.empty-state.small { font-size: 12.5px; padding: 6px 0; margin: 0; }
+.cd-add { margin-top: 10px; }
+.cd-add input[type=text] { flex: 1; min-width: 0; }
+.cd-add input[type=date] { width: 130px; }
+.cd-more { font-size: 11px; color: var(--text-muted); margin-top: 6px; font-family: var(--font-mono); }
+
+@media (max-width: 720px) {
+  .home-cards { grid-template-columns: 1fr; }
+  .home-card .field-row-inline { flex-wrap: wrap; }
+  .home-card .field-row-inline input[type=date],
+  .cd-add input[type=date] { width: 100%; }
+  .home-card .field-row-inline .btn { flex: 1; }
+}
