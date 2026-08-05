@@ -227,7 +227,7 @@ async function renderToday() {
 // does not, on one line next to four other numbers.
 function fmtHealthStrip(key, value) {
   if (value == null) return "—";
-  if (key === "sleep_minutes") {
+  if (key === "sleep_minutes" || key === "time_in_bed_minutes") {
     const h = Math.floor(value / 60), m = Math.round(value % 60);
     return `${h}h ${String(m).padStart(2, "0")}m`;
   }

@@ -66,6 +66,9 @@ METRICS = {
     "active_minutes": {"label": "Active", "unit": "min", "kind": "sum"},
     "exercise_minutes": {"label": "Exercise", "unit": "min", "kind": "sum"},
     "sleep_minutes": {"label": "Sleep", "unit": "min", "kind": "sum"},
+    # Kept alongside sleep so the gap between them is visible - that gap is
+    # time awake in bed, and its ratio is sleep efficiency.
+    "time_in_bed_minutes": {"label": "In bed", "unit": "min", "kind": "sum"},
     "calories": {"label": "Calories", "unit": "kcal", "kind": "sum"},
     "workout_hr": {"label": "Workout HR", "unit": "bpm", "kind": "avg"},
     "weight_kg": {"label": "Weight", "unit": "kg", "kind": "last"},
@@ -453,6 +456,42 @@ def _wake_date(interval):
     return dt.date().isoformat()
 
 
+# Stage types that count as actually asleep. An allowlist rather than a
+# denylist: an unrecognised future stage should not silently inflate the
+# total, which is the failure mode that started this.
+#   FITBIT     reports STAGES  -> LIGHT / DEEP / REM / AWAKE
+#   HEALTH_KIT reports CLASSIC -> ASLEEP / AWAKE
+ASLEEP_STAGES = {"ASLEEP", "LIGHT", "DEEP", "REM", "SLEEPING",
+                 "ASLEEP_CORE", "ASLEEP_DEEP", "ASLEEP_REM", "ASLEEP_UNSPECIFIED"}
+
+
+def _asleep_minutes(sleep_obj):
+    """
+    Minutes actually asleep, not minutes in bed.
+
+    The session interval spans lights-out to getting up, which includes time
+    awake - 56 minutes of it on one measured night, which is the difference
+    between the watch saying 7h42m and this app saying 8h38m. When the
+    provider breaks the session into stages, sum only the sleeping ones.
+
+    Falls back to the raw interval when no stages are given, because a
+    session with no breakdown is still better information than nothing.
+    """
+    stages = sleep_obj.get("stages") or []
+    if not stages:
+        return _duration_seconds(sleep_obj.get("interval") or {}) / 60.0
+
+    asleep = sum(
+        _duration_seconds(st) for st in stages
+        if str(st.get("type", "")).upper() in ASLEEP_STAGES
+    )
+    # A session whose stages are all unrecognised would otherwise report
+    # zero sleep; the interval is the safer answer there.
+    if asleep <= 0:
+        return _duration_seconds(sleep_obj.get("interval") or {}) / 60.0
+    return asleep / 60.0
+
+
 def _duration_seconds(interval):
     """Length of an interval in seconds, from its UTC endpoints."""
     try:
@@ -515,7 +554,9 @@ def _fold(point, dtype, totals, lasts):
         add("distance_km", metres / 1000.0 if metres else None)
 
     elif dtype == "sleep":
-        add("sleep_minutes", _duration_seconds(interval) / 60.0)
+        # Time asleep, not time in bed - see _asleep_minutes.
+        add("sleep_minutes", _asleep_minutes(obj))
+        add("time_in_bed_minutes", _duration_seconds(interval) / 60.0)
 
     elif dtype == "weight":
         grams = _num(obj.get("weightGrams"))

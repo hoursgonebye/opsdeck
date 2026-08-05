@@ -8,7 +8,7 @@
 // Works with no provider connected - manual entry and pushed data land in
 // the same place, so connecting Google is an upgrade, not a prerequisite.
 
-const HEALTH_ORDER = ["steps", "sleep_minutes", "active_minutes",
+const HEALTH_ORDER = ["steps", "sleep_minutes", "time_in_bed_minutes", "active_minutes",
                       "exercise_minutes", "distance_km", "calories",
                       "workout_hr", "weight_kg"];
 
@@ -24,7 +24,7 @@ let hMetric = null;
 
 function fmtMetric(key, value, unit) {
   if (value === null || value === undefined) return "—";
-  if (key === "sleep_minutes") {
+  if (key === "sleep_minutes" || key === "time_in_bed_minutes") {
     const h = Math.floor(value / 60), m = Math.round(value % 60);
     return `${h}h ${String(m).padStart(2, "0")}m`;
   }
