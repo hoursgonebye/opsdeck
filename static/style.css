@@ -1361,3 +1361,40 @@ a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-vis
   .h-stats { grid-template-columns: 1fr 1fr; }
   .h-big { height: 140px; }
 }
+
+/* ---- Today: health glance strip ----
+   One line, above the fold. Last night's sleep first because it's the
+   number you want before the day has produced anything else. Whole strip is
+   a button through to Health - a glance should be one tap from the detail. */
+.health-strip {
+  display: flex; align-items: center; gap: 0;
+  width: 100%; text-align: left; font: inherit; color: inherit;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; margin-bottom: 14px;
+  cursor: pointer; transition: border-color .15s;
+  overflow-x: auto;
+}
+.health-strip:hover { border-color: var(--amber); }
+.hs-item {
+  display: flex; align-items: baseline; gap: 6px;
+  padding-right: 18px; margin-right: 18px;
+  border-right: 1px solid var(--border); flex: none;
+}
+.hs-item:last-of-type { border-right: none; margin-right: 0; padding-right: 0; }
+.hs-label {
+  font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-muted);
+}
+.hs-value { font-size: 16px; font-weight: 700; }
+.hs-delta { font-size: 10.5px; font-weight: 600; }
+.hs-delta.up { color: var(--green); }
+.hs-delta.down { color: var(--amber); }
+.hs-delta.flat { color: var(--text-muted); font-weight: 400; }
+.hs-more { margin-left: auto; color: var(--text-muted); font-size: 17px; padding-left: 12px; flex: none; }
+
+@media (max-width: 720px) {
+  .health-strip { padding: 9px 11px; gap: 0; }
+  .hs-item { padding-right: 13px; margin-right: 13px; }
+  .hs-value { font-size: 14px; }
+  .hs-more { display: none; }   /* the row already scrolls; an arrow adds noise */
+}

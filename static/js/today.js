@@ -6,9 +6,12 @@ async function renderToday() {
   const panel = el("panel");
   panel.innerHTML = `<div class="loading">Loading…</div>`;
 
-  const [data, pendingNotes] = await Promise.all([
+  const [data, pendingNotes, healthSummary] = await Promise.all([
     API.get(`/today?date=${todayISO()}`),
     API.get("/notes/quick?status=pending").catch(() => []),
+    // Optional: the profile may have Health switched off, or have no
+    // readings yet. Either way Today should still render.
+    API.get("/health/summary?days=7").catch(() => ({})),
   ]);
 
   const eventsHtml = data.events.length
@@ -86,9 +89,45 @@ async function renderToday() {
        </div>`
     : "";
 
+  // ---- health strip ----
+  // Last night plus whatever the watch has logged so far today. Deliberately
+  // one line: this is a glance, and the Health tab is where you actually
+  // look at anything. Sleep sits first because under wake-date bucketing
+  // today's sleep figure *is* last night's, which is the number you want
+  // before you've done anything else.
+  const stripOrder = ["sleep_minutes", "steps", "active_minutes",
+                      "exercise_minutes", "calories", "weight_kg"];
+  const stripItems = stripOrder
+    .filter((k) => healthSummary[k] && healthSummary[k].today != null)
+    .slice(0, 5)
+    .map((k) => {
+      const s = healthSummary[k];
+      let cmp = "";
+      if (s.avg) {
+        const pct = Math.round(((s.today - s.avg) / s.avg) * 100);
+        cmp = Math.abs(pct) >= 5
+          ? `<span class="hs-delta ${pct > 0 ? "up" : "down"}">${pct > 0 ? "▲" : "▼"}${Math.abs(pct)}%</span>`
+          : `<span class="hs-delta flat">≈</span>`;
+      }
+      return `
+        <div class="hs-item">
+          <span class="hs-label">${k === "sleep_minutes" ? "Last night" : esc(s.label)}</span>
+          <span class="hs-value">${fmtHealthStrip(k, s.today)}</span>
+          ${cmp}
+        </div>`;
+    }).join("");
+
+  const healthStrip = stripItems
+    ? `<button class="health-strip" id="health-strip" title="Open Health">
+         ${stripItems}<span class="hs-more">›</span>
+       </button>`
+    : "";
+
   panel.innerHTML = `
     <h1 class="section-title">Today</h1>
     <p class="section-sub">${fmtDateLong(data.date)}</p>
+
+    ${healthStrip}
 
     <div class="quick-note">
       <textarea id="qn-input" rows="1" placeholder="Quick note — anything, file it later…"></textarea>
@@ -163,6 +202,8 @@ async function renderToday() {
     });
   });
 
+  el("health-strip")?.addEventListener("click", () => go("health"));
+
   panel.querySelectorAll(".routine-row").forEach((row) => {
     row.addEventListener("click", async () => {
       await API.post(`/routines/${row.dataset.routine}/toggle`, { date: todayISO() });
@@ -178,4 +219,22 @@ async function renderToday() {
       renderToday();
     });
   });
+}
+
+
+// Compact formatter for the Today strip. Deliberately terser than the
+// Health tab's - "7h 02m" and "8.4k" read at a glance where "8,432 steps"
+// does not, on one line next to four other numbers.
+function fmtHealthStrip(key, value) {
+  if (value == null) return "—";
+  if (key === "sleep_minutes") {
+    const h = Math.floor(value / 60), m = Math.round(value % 60);
+    return `${h}h ${String(m).padStart(2, "0")}m`;
+  }
+  if (key === "steps") {
+    return value >= 10000 ? `${(value / 1000).toFixed(1)}k` : Math.round(value).toLocaleString();
+  }
+  if (key === "calories") return `${Math.round(value)}`;
+  if (key === "weight_kg") return `${Math.round(value * 10) / 10}kg`;
+  return `${Math.round(value)}m`;
 }
