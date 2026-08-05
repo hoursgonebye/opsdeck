@@ -7,7 +7,7 @@
 
 const HEALTH_ORDER = ["steps", "sleep_minutes", "active_minutes",
                       "exercise_minutes", "distance_km", "calories",
-                      "resting_hr", "weight_kg"];
+                      "workout_hr", "weight_kg"];
 
 // Sleep reads better as 7h 10m than 430 min.
 function fmtMetric(key, value, unit) {

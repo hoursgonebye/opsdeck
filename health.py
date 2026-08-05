@@ -67,7 +67,7 @@ METRICS = {
     "exercise_minutes": {"label": "Exercise", "unit": "min", "kind": "sum"},
     "sleep_minutes": {"label": "Sleep", "unit": "min", "kind": "sum"},
     "calories": {"label": "Calories", "unit": "kcal", "kind": "sum"},
-    "resting_hr": {"label": "Resting HR", "unit": "bpm", "kind": "avg"},
+    "workout_hr": {"label": "Workout HR", "unit": "bpm", "kind": "avg"},
     "weight_kg": {"label": "Weight", "unit": "kg", "kind": "last"},
 }
 
@@ -244,17 +244,15 @@ def disconnect(conn, profile_id):
 
 # ------------------------------------------------------------- sync
 
-# Google Health data type -> (our metric, converter). Kept as a table so a
-# renamed upstream type is a one-line change.
-DATA_TYPES = {
-    "com.google.step_count.delta": ("steps", lambda v: v),
-    "com.google.distance.delta": ("distance_km", lambda v: v / 1000.0),
-    "com.google.active_minutes": ("active_minutes", lambda v: v),
-    "com.google.calories.expended": ("calories", lambda v: v),
-    "com.google.sleep.segment": ("sleep_minutes", lambda v: v),
-    "com.google.heart_rate.resting": ("resting_hr", lambda v: v),
-    "com.google.weight": ("weight_kg", lambda v: v),
-}
+# The v4 data types that actually exist and support list(). Verified
+# against a live account - `calories`, `active_minutes`, `heart_rate` and
+# friends are rejected with "Invalid data type ID", and the daily roll-up
+# methods 404 on GET, so everything below is derived by paginating raw
+# dataPoints and bucketing them by their own civil (local) date.
+DATA_TYPES = ("steps", "distance", "sleep", "weight", "exercise")
+
+MAX_PAGES = 40          # ~4000 points; a hard stop so a bad window can't spin
+PAGE_SIZE = 200
 
 
 def _get(url, token):
@@ -263,13 +261,173 @@ def _get(url, token):
         return json.loads(res.read().decode())
 
 
+def _civil_date(obj):
+    """
+    The point's own local date, as the device recorded it.
+
+    Preferred over converting startTime, because a workout at 00:30 local
+    belongs to that day even though its UTC timestamp says otherwise.
+    Falls back to offsetting the UTC instant when no civil time is given.
+    """
+    for holder in ("civilStartTime", "civilTime"):
+        civil = obj.get(holder) or {}
+        d = civil.get("date") or {}
+        if d.get("year"):
+            return f"{d['year']:04d}-{d['month']:02d}-{d['day']:02d}"
+
+    stamp = obj.get("startTime") or obj.get("physicalTime")
+    if not stamp:
+        return None
+    try:
+        dt = datetime.strptime(stamp[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+    offset = obj.get("startUtcOffset") or obj.get("utcOffset") or "0s"
+    try:
+        dt += timedelta(seconds=int(str(offset).rstrip("s")))
+    except ValueError:
+        pass
+    return dt.date().isoformat()
+
+
+def _wake_date(interval):
+    """
+    The local date a sleep session *ended*. Mirrors _civil_date but reads the
+    end of the interval, because sleep is credited to the morning you wake.
+    """
+    civil = interval.get("civilEndTime") or {}
+    d = civil.get("date") or {}
+    if d.get("year"):
+        return f"{d['year']:04d}-{d['month']:02d}-{d['day']:02d}"
+
+    stamp = interval.get("endTime")
+    if not stamp:
+        return _civil_date(interval)
+    try:
+        dt = datetime.strptime(stamp[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return _civil_date(interval)
+    offset = interval.get("endUtcOffset") or interval.get("startUtcOffset") or "0s"
+    try:
+        dt += timedelta(seconds=int(str(offset).rstrip("s")))
+    except ValueError:
+        pass
+    return dt.date().isoformat()
+
+
+def _duration_seconds(interval):
+    """Length of an interval in seconds, from its UTC endpoints."""
+    try:
+        a = datetime.strptime(interval["startTime"][:19], "%Y-%m-%dT%H:%M:%S")
+        b = datetime.strptime(interval["endTime"][:19], "%Y-%m-%dT%H:%M:%S")
+        return max(0.0, (b - a).total_seconds())
+    except (KeyError, ValueError, TypeError):
+        return 0.0
+
+
+def _num(value):
+    """Values arrive as strings ("7"), numbers, or durations ("3480s")."""
+    if value is None:
+        return None
+    try:
+        return float(str(value).rstrip("s"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _fold(point, dtype, totals, lasts):
+    """
+    Reduce one raw data point into per-(metric, day, platform) accumulators.
+
+    Steps and distance arrive as per-minute deltas, sleep and exercise as
+    sessions, weight as instantaneous samples - so each needs its own rule
+    rather than a single generic sum.
+
+    Platform is part of the key because a phone commonly feeds Google Health
+    from more than one source at once (a Fitbit watch AND Apple HealthKit,
+    say). Those sources describe the *same* day, so summing them together
+    double-counts: it produced 35,000-step days and a 24-hour night's sleep
+    before this was keyed apart. Reconciliation happens in _reduce().
+    """
+    obj = point.get(dtype) or {}
+    interval = obj.get("interval") or {}
+    plat = (point.get("dataSource") or {}).get("platform") or "UNKNOWN"
+
+    if dtype == "sleep":
+        # A night belongs to the morning you wake, not the evening you lay
+        # down - the convention every sleep tracker uses. Bucketing by start
+        # puts a 23:47 bedtime on the same day as that morning's wake-up,
+        # stacking two separate nights onto one date (seen live: 17h41m).
+        day = _wake_date(interval)
+    else:
+        day = _civil_date(interval) or _civil_date(obj.get("sampleTime") or {})
+    if not day:
+        return
+
+    def add(metric, amount):
+        if amount:
+            key = (metric, day, plat)
+            totals[key] = totals.get(key, 0.0) + amount
+
+    if dtype == "steps":
+        add("steps", _num(obj.get("count")))
+
+    elif dtype == "distance":
+        metres = _num(obj.get("distanceMeters") or obj.get("distance"))
+        add("distance_km", metres / 1000.0 if metres else None)
+
+    elif dtype == "sleep":
+        add("sleep_minutes", _duration_seconds(interval) / 60.0)
+
+    elif dtype == "weight":
+        grams = _num(obj.get("weightGrams"))
+        if grams:
+            # Points arrive newest-first, so the first one seen for a day is
+            # the latest reading of that day.
+            lasts.setdefault(("weight_kg", day, plat), grams / 1000.0)
+
+    elif dtype == "exercise":
+        secs = _num(obj.get("activeDuration")) or _duration_seconds(interval)
+        add("exercise_minutes", secs / 60.0 if secs else None)
+        summary = obj.get("metricsSummary") or {}
+        add("calories", _num(summary.get("caloriesKcal")))
+        add("active_minutes", _num(summary.get("activeZoneMinutes")))
+        hr = _num(summary.get("averageHeartRateBeatsPerMinute"))
+        if hr:
+            lasts.setdefault(("workout_hr", day, plat), hr)
+
+
+def _reduce(totals, lasts):
+    """
+    Collapse per-platform figures into one value per (metric, day).
+
+    Takes the maximum rather than the sum. Each platform reports its own
+    complete view of the day, so the largest is the most complete one -
+    adding them would count the same steps or the same night twice. Max also
+    degrades sensibly when only one source is present, which is the common
+    case.
+    """
+    out = {}
+    for (metric, day, _plat), value in totals.items():
+        key = (metric, day)
+        out[key] = max(out.get(key, 0.0), value)
+    for (metric, day, _plat), value in lasts.items():
+        key = (metric, day)
+        out.setdefault(key, value)
+    return out
+
+
 def sync(conn, profile_id, days=7):
     """
-    Pull the last `days` days of daily roll-ups into health_metrics.
+    Pull the last `days` days into health_metrics.
 
-    Returns a dict describing what happened. Never raises for an individual
-    data type: one unavailable metric should not abort the whole sync, so
-    failures are collected and reported.
+    There is no server-side date filter on dataPoints.list - `filter` exists
+    but rejects every time-based syntax, and the roll-up methods 404 - so
+    this pages through newest-first and stops once a type's points fall
+    before the window. Aggregation happens here.
+
+    One failing data type never aborts the run: errors are collected and
+    reported so a partial sync still writes what it could.
     """
     if not configured():
         return {"ok": False, "error": "no Google OAuth client configured"}
@@ -277,39 +435,54 @@ def sync(conn, profile_id, days=7):
     if not token:
         return {"ok": False, "error": "not connected - authorise first"}
 
-    start = (today_local() - timedelta(days=days - 1)).isoformat()
-    end = today_local().isoformat()
-    written, errors = 0, []
+    window_start = (today_local() - timedelta(days=days - 1)).isoformat()
+    totals, lasts, errors, scanned = {}, {}, [], 0
 
-    for dtype, (metric, convert) in DATA_TYPES.items():
-        url = (f"{HEALTH_BASE}/users/me/dataTypes/{urllib.parse.quote(dtype)}"
-               f"/dataPoints:dailyRollUp"
-               f"?startDate={start}&endDate={end}")
-        try:
-            payload = _get(url, token)
-        except urllib.error.HTTPError as e:
-            # 403/404 usually means this scope was not granted or the device
-            # does not produce that type - not fatal, just unavailable.
-            errors.append(f"{metric}: HTTP {e.code}")
-            continue
-        except (urllib.error.URLError, ValueError) as e:
-            errors.append(f"{metric}: {e}")
-            continue
-
-        for point in payload.get("dataPoints", payload.get("rollUps", [])):
-            day = (point.get("date") or point.get("localDate") or "")[:10]
-            raw = point.get("value", point.get("total"))
-            if isinstance(raw, dict):
-                raw = raw.get("doubleValue", raw.get("intValue", raw.get("value")))
-            if not day or raw is None:
-                continue
+    for dtype in DATA_TYPES:
+        page_token, pages = None, 0
+        while pages < MAX_PAGES:
+            url = (f"{HEALTH_BASE}/users/me/dataTypes/{dtype}"
+                   f"/dataPoints?pageSize={PAGE_SIZE}")
+            if page_token:
+                url += "&pageToken=" + urllib.parse.quote(page_token)
             try:
-                record(conn, profile_id, metric, convert(float(raw)),
-                       local_date=day, source=PROVIDER)
-                written += 1
-            except (ValueError, TypeError) as e:
-                errors.append(f"{metric} {day}: {e}")
+                payload = _get(url, token)
+            except urllib.error.HTTPError as e:
+                errors.append(f"{dtype}: HTTP {e.code}")
+                break
+            except (urllib.error.URLError, ValueError) as e:
+                errors.append(f"{dtype}: {e}")
+                break
+
+            points = payload.get("dataPoints", [])
+            scanned += len(points)
+            oldest = None
+            for point in points:
+                _fold(point, dtype, totals, lasts)
+                obj = point.get(dtype) or {}
+                day = (_civil_date(obj.get("interval") or {})
+                       or _civil_date(obj.get("sampleTime") or {}))
+                if day and (oldest is None or day < oldest):
+                    oldest = day
+
+            page_token = payload.get("nextPageToken")
+            pages += 1
+            # Newest-first: once a whole page predates the window there is
+            # nothing left worth paging for.
+            if not page_token or (oldest and oldest < window_start):
+                break
+
+    written = 0
+    for (metric, day), value in _reduce(totals, lasts).items():
+        if day < window_start:
+            continue
+        try:
+            record(conn, profile_id, metric, round(value, 2),
+                   local_date=day, source=PROVIDER)
+            written += 1
+        except (ValueError, TypeError) as e:
+            errors.append(f"{metric} {day}: {e}")
 
     conn.commit()
-    return {"ok": True, "written": written, "days": days,
+    return {"ok": True, "written": written, "days": days, "scanned": scanned,
             "errors": errors, "synced_at": now_local().isoformat()}
