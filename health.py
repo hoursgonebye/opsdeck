@@ -25,7 +25,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from db import connect
 from recurrence import today_local, now_local
@@ -143,6 +143,144 @@ def summary(conn, profile_id, days=7):
             "avg": round(avg, 2) if avg is not None else None,
         }
     return out
+
+
+# ------------------------------------------------------------- analytics
+
+def _median(values):
+    if not values:
+        return None
+    s = sorted(values)
+    mid = len(s) // 2
+    return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2.0
+
+
+def stats(conn, profile_id, metric, days=30):
+    """
+    Descriptive stats for one metric over a window.
+
+    Includes the two halves of the window compared against each other, which
+    answers "am I trending up or down" far better than a single average -
+    and a coverage count, because an average over 3 of 30 days deserves less
+    trust than one over 28.
+    """
+    start = (today_local() - timedelta(days=days - 1)).isoformat()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT local_date, value FROM health_metrics "
+        "WHERE profile_id=? AND metric=? AND local_date>=? ORDER BY local_date",
+        (profile_id, metric, start),
+    )]
+    if not rows:
+        return {"metric": metric, "days": days, "count": 0}
+
+    values = [r["value"] for r in rows]
+    best = max(rows, key=lambda r: r["value"])
+    worst = min(rows, key=lambda r: r["value"])
+
+    # Split the window in half and compare, for a direction of travel.
+    half = len(rows) // 2
+    older = [r["value"] for r in rows[:half]]
+    newer = [r["value"] for r in rows[half:]]
+    trend = None
+    if older and newer:
+        a, b = sum(older) / len(older), sum(newer) / len(newer)
+        if a:
+            trend = round((b - a) / a * 100, 1)
+
+    return {
+        "metric": metric,
+        "label": METRICS.get(metric, {}).get("label", metric),
+        "unit": METRICS.get(metric, {}).get("unit", ""),
+        "days": days,
+        "count": len(rows),
+        "coverage_pct": round(len(rows) / days * 100),
+        "total": round(sum(values), 2),
+        "avg": round(sum(values) / len(values), 2),
+        "median": round(_median(values), 2),
+        "min": round(min(values), 2),
+        "max": round(max(values), 2),
+        "best_day": {"date": best["local_date"], "value": round(best["value"], 2)},
+        "worst_day": {"date": worst["local_date"], "value": round(worst["value"], 2)},
+        "trend_pct": trend,
+        "first_seen": rows[0]["local_date"],
+        "last_seen": rows[-1]["local_date"],
+    }
+
+
+def by_weekday(conn, profile_id, metric, days=90):
+    """
+    Average per day of the week. Surfaces patterns a flat timeline hides -
+    that Saturdays are the big step days, or that Sunday sleep is the
+    outlier.
+    """
+    start = (today_local() - timedelta(days=days - 1)).isoformat()
+    buckets = {i: [] for i in range(7)}
+    for r in conn.execute(
+        "SELECT local_date, value FROM health_metrics "
+        "WHERE profile_id=? AND metric=? AND local_date>=?",
+        (profile_id, metric, start),
+    ):
+        try:
+            wd = date.fromisoformat(r["local_date"]).weekday()   # Mon=0
+        except ValueError:
+            continue
+        buckets[wd].append(r["value"])
+
+    names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    return [
+        {"weekday": names[i], "n": len(v),
+         "avg": round(sum(v) / len(v), 2) if v else None}
+        for i, v in buckets.items()
+    ]
+
+
+def by_source(conn, profile_id, metric=None, days=90):
+    """Which platform actually supplied the readings."""
+    start = (today_local() - timedelta(days=days - 1)).isoformat()
+    sql = ("SELECT source, COUNT(*) AS n, MIN(local_date) AS first, MAX(local_date) AS last "
+           "FROM health_metrics WHERE profile_id=? AND local_date>=?")
+    params = [profile_id, start]
+    if metric:
+        sql += " AND metric=?"
+        params.append(metric)
+    sql += " GROUP BY source ORDER BY n DESC"
+    return [dict(r) for r in conn.execute(sql, params)]
+
+
+def raw(conn, profile_id, metric=None, source=None, start=None, end=None, limit=500):
+    """Every stored row, filterable. The escape hatch for 'let me see it all'."""
+    sql = ("SELECT id, metric, value, unit, local_date, source, recorded_at "
+           "FROM health_metrics WHERE profile_id=?")
+    params = [profile_id]
+    if metric:
+        sql += " AND metric=?"; params.append(metric)
+    if source:
+        sql += " AND source=?"; params.append(source)
+    if start:
+        sql += " AND local_date>=?"; params.append(start)
+    if end:
+        sql += " AND local_date<=?"; params.append(end)
+    sql += " ORDER BY local_date DESC, metric LIMIT ?"
+    params.append(min(int(limit), 5000))
+    return [dict(r) for r in conn.execute(sql, params)]
+
+
+def tracked_metrics(conn, profile_id):
+    """Which metrics actually have data, so the UI never offers a dead tab."""
+    return [r["metric"] for r in conn.execute(
+        "SELECT DISTINCT metric FROM health_metrics WHERE profile_id=? ORDER BY metric",
+        (profile_id,),
+    )]
+
+
+def detail(conn, profile_id, metric, days=30):
+    """Everything about one metric in a single call."""
+    return {
+        "stats": stats(conn, profile_id, metric, days),
+        "series": series(conn, profile_id, days, metric),
+        "weekday": by_weekday(conn, profile_id, metric, max(days, 28)),
+        "sources": by_source(conn, profile_id, metric, days),
+    }
 
 
 # ------------------------------------------------------------- oauth

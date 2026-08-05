@@ -84,6 +84,33 @@ household-wide and ignores it.
 
 `GET /api/attempts?scope=all` spans every profile's queue at once.
 
+## Health
+
+Steps, sleep, exercise, weight and more, synced from a watch (and writable
+by hand or by any script).
+
+```bash
+ops /health/summary                                   # today vs baseline
+ops "/health/stats?days=30"                           # every metric at once
+ops "/health/detail?metric=sleep_minutes&days=30"     # one metric, broken down
+ops "/health/raw?metric=steps&limit=50"               # individual readings
+```
+
+`/api/context` includes a health block, so `ops-context` gets you a summary
+plus 30-day stats without extra calls.
+
+Read it before commenting on their energy, consistency or capacity. Two
+things to respect:
+
+- **Coverage.** Every stat block carries `coverage_pct`. An average over 4
+  of 30 days is not a trend, and saying otherwise is worse than saying
+  nothing.
+- **Scope.** Describe what the data shows. You are not a doctor and should
+  not be diagnosing anything from a step count.
+
+Writing is allowed too — `POST /api/health` with
+`{"metric","value","date"}` — for logging something they tell you.
+
 ## Deleting things
 
 You have full read/write access, **including DELETE**. When they ask you to

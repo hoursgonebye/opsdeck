@@ -377,6 +377,59 @@ def health_summary():
     return jsonify(out)
 
 
+@api.route("/health/detail", methods=["GET"])
+@require_token
+def health_detail():
+    """Everything about one metric: stats, series, weekday shape, sources."""
+    metric = request.args.get("metric")
+    if not metric:
+        return jsonify({"error": "metric required"}), 400
+    conn = connect()
+    out = health.detail(conn, active_profile(), metric,
+                        int(request.args.get("days", 30)))
+    conn.close()
+    return jsonify(out)
+
+
+@api.route("/health/stats", methods=["GET"])
+@require_token
+def health_stats():
+    """Stats for one metric, or every tracked metric when none is named."""
+    conn = connect()
+    pid = active_profile()
+    days = int(request.args.get("days", 30))
+    metric = request.args.get("metric")
+    if metric:
+        out = health.stats(conn, pid, metric, days)
+    else:
+        out = {m: health.stats(conn, pid, m, days)
+               for m in health.tracked_metrics(conn, pid)}
+    conn.close()
+    return jsonify(out)
+
+
+@api.route("/health/raw", methods=["GET"])
+@require_token
+def health_raw():
+    """Every stored row, filterable - the 'let me see all of it' endpoint."""
+    conn = connect()
+    pid = active_profile()
+    out = {
+        "rows": health.raw(
+            conn, pid,
+            metric=request.args.get("metric"),
+            source=request.args.get("source"),
+            start=request.args.get("start"),
+            end=request.args.get("end"),
+            limit=int(request.args.get("limit", 500)),
+        ),
+        "tracked": health.tracked_metrics(conn, pid),
+        "sources": health.by_source(conn, pid, days=3650),
+    }
+    conn.close()
+    return jsonify(out)
+
+
 @api.route("/health/connect", methods=["GET"])
 @require_token
 def health_connect():
@@ -2409,8 +2462,13 @@ def full_context():
     index. Saves an agent five round trips before it can say anything useful.
     """
     conn = connect()
+    pid = active_profile()
     boards_data = []
-    for b in many(conn, "SELECT * FROM boards WHERE archived=0 ORDER BY position, id"):
+    # Every one of these is profile-scoped. They were not before v6/v7, which
+    # meant an agent asking for context got all three profiles' boards,
+    # routines and docs blended into one list with no way to tell them apart.
+    for b in many(conn, "SELECT * FROM boards WHERE archived=0 AND profile_id=? "
+                        "ORDER BY position, id", (pid,)):
         b["lists"] = many(
             conn, "SELECT * FROM lists WHERE board_id=? AND archived=0 ORDER BY position, id",
             (b["id"],),
@@ -2419,10 +2477,17 @@ def full_context():
             lst["cards"] = load_cards(conn, lst["id"])
         boards_data.append(b)
 
-    tree = growth.load_tree(conn, active_profile())
-    xp = growth.weekly_xp(conn, 8, active_profile())
-    routines = many(conn, "SELECT * FROM routines WHERE active=1 ORDER BY time_group, position")
-    docs_index = many(conn, "SELECT id,title,kind,folder,updated_at FROM docs ORDER BY updated_at DESC LIMIT 50")
+    tree = growth.load_tree(conn, pid)
+    xp = growth.weekly_xp(conn, 8, pid)
+    routines = many(conn, "SELECT * FROM routines WHERE active=1 AND profile_id=? "
+                          "ORDER BY time_group, position", (pid,))
+    docs_index = many(conn, "SELECT id,title,kind,folder,updated_at FROM docs "
+                            "WHERE profile_id=? ORDER BY updated_at DESC LIMIT 50", (pid,))
+    health_block = {
+        "summary": health.summary(conn, pid, 7),
+        "stats_30d": {m: health.stats(conn, pid, m, 30)
+                      for m in health.tracked_metrics(conn, pid)},
+    }
 
     conn.close()
     return jsonify({
@@ -2432,4 +2497,6 @@ def full_context():
         "xp_recent": xp,
         "routines": routines,
         "docs": docs_index,
+        "health": health_block,
+        "profile_id": pid,
     })

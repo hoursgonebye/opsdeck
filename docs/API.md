@@ -376,6 +376,9 @@ Assistant automation, an iOS Shortcut or curl can POST the same shape.
 |---|---|---|
 | GET | `/api/health?days=30&metric=` | Summary + series + provider state |
 | GET | `/api/health/summary?days=7` | Today per metric, with trailing average |
+| GET | `/api/health/stats?days=30&metric=` | avg/median/min/max/total, best & worst day, trend, coverage. Omit `metric` for all |
+| GET | `/api/health/detail?metric=&days=` | Stats + series + day-of-week shape + source breakdown |
+| GET | `/api/health/raw?metric=&source=&start=&end=&limit=` | Individual stored rows |
 | POST | `/api/health` | Ingest one reading or a batch |
 | GET | `/api/health/connect` | Returns the Google consent URL |
 | GET | `/api/health/callback` | OAuth redirect target (no token header — browser navigation) |
@@ -405,3 +408,12 @@ on-device only with no cloud API, so neither can be polled from a server.
 The legacy Fitbit Web API can, but sunsets 2026-09-30. This targets the
 Google Health API (`health.googleapis.com/v4`), which is where that data
 moves. Access tokens last one hour, so the refresh token is what's stored.
+
+**Reading the stats.** `coverage_pct` is the share of the window that
+actually has readings — an average over 4 of 30 days is not a trend, and the
+number is there so a caller can tell the difference. `trend_pct` compares
+the second half of the window against the first, which answers "is this
+going up" better than a single average does.
+
+`GET /api/context` carries a `health` block (7-day summary plus 30-day
+stats), so an agent gets health state without extra round trips.
