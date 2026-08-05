@@ -42,11 +42,18 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 HEALTH_BASE = "https://health.googleapis.com/v4"
 
+# Exact scope strings from https://developers.google.com/health/scopes.
+# The prefix is `googlehealth.`, not `health.` - the latter is rejected with
+# Error 400: invalid_scope before the consent screen ever renders.
+#
+# Read-only throughout: this app displays health data, it never writes back,
+# so requesting a writeonly scope would be asking for permission we have no
+# use for. Steps/activity and heart rate both live under
+# activity_and_fitness and health_metrics_and_measurements respectively.
 SCOPES = [
-    "https://www.googleapis.com/auth/health.activity.read",
-    "https://www.googleapis.com/auth/health.sleep.read",
-    "https://www.googleapis.com/auth/health.body.read",
-    "https://www.googleapis.com/auth/health.heartrate.read",
+    "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
+    "https://www.googleapis.com/auth/googlehealth.sleep.readonly",
+    "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
 ]
 
 PROVIDER = "google_health"
