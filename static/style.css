@@ -1398,3 +1398,19 @@ a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-vis
   .hs-value { font-size: 14px; }
   .hs-more { display: none; }   /* the row already scrolls; an arrow adds noise */
 }
+
+/* ---- Subscribed calendar feeds ---- */
+.feed-list { margin-bottom: 16px; }
+.feed-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 0; border-bottom: 1px solid var(--border);
+}
+.feed-row:last-child { border-bottom: none; }
+.feed-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.feed-name { font-weight: 600; font-size: 13.5px; }
+.feed-err { font-size: 11.5px; color: var(--red); }
+.btn.tiny.danger { color: var(--red); border-color: var(--red); }
+
+/* Feed events read as slightly set-apart: they're not yours to edit here. */
+.cal-item.event[data-feed] { font-style: italic; }
+.cal-item.event[data-feed]:hover { background: var(--panel-alt); cursor: default; }

@@ -19,7 +19,7 @@ DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = DATA_DIR / "opsdeck.db"
 UPLOAD_DIR = DATA_DIR / "uploads"
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Tables that gain a profile_id in v5. Pre-v5 rows all belong to 'primary'.
 PROFILE_SCOPED_TABLES = ("boards", "events", "routines", "docs", "quick_notes")
@@ -468,6 +468,26 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_notif_profile ON notifications(profile_id, seen);
 
+-- ==================== calendar feeds (schema v8) ====================
+--
+-- Subscribed read-only .ics feeds: a work roster, a class timetable. Their
+-- events land in the normal events table tagged with feed_id, so they show
+-- up everywhere events already do - Today, the month grid, the merged Us
+-- view - without any of those needing to know feeds exist.
+CREATE TABLE IF NOT EXISTS calendar_feeds (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id     TEXT NOT NULL,
+  name           TEXT NOT NULL,
+  url            TEXT NOT NULL,
+  color          TEXT NOT NULL DEFAULT 'blue',
+  enabled        INTEGER NOT NULL DEFAULT 1,
+  last_synced_at TEXT,
+  last_status    TEXT NOT NULL DEFAULT '',
+  last_count     INTEGER NOT NULL DEFAULT 0,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_feeds_profile ON calendar_feeds(profile_id);
+
 -- ==================== health (schema v7) ====================
 --
 -- Deliberately provider-agnostic. Google's Health API is the intended
@@ -671,6 +691,16 @@ def _migrate(conn):
         # attributes.key was globally unique by convention; with per-profile
         # attributes two people can both have a 'health' stat.
         conn.execute("DROP INDEX IF EXISTS idx_attributes_key")
+
+    if current < 8:
+        # v8: subscribed calendar feeds. Events gain a feed_id (NULL for
+        # anything the user made themselves) and external_uid, a content
+        # hash used to identify a feed event across re-syncs.
+        if "feed_id" not in _columns(conn, "events"):
+            conn.execute("ALTER TABLE events ADD COLUMN feed_id INTEGER")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_events_feed ON events(feed_id)")
+        if "external_uid" not in _columns(conn, "events"):
+            conn.execute("ALTER TABLE events ADD COLUMN external_uid TEXT")
 
     if current < 7:
         # v7 adds health_metrics and oauth_tokens, both created by SCHEMA

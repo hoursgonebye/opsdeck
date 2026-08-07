@@ -122,6 +122,39 @@ RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU;COUNT=6      every other Tuesday, 6 times
 RRULE:FREQ=MONTHLY;BYDAY=2TU                       second Tuesday monthly
 ```
 
+### Calendar feeds
+
+Read-only `.ics` subscriptions — a work roster, a class timetable. Imported
+events live in the normal `events` table tagged with `feed_id`, so they
+appear on Today, the month grid and the merged Us view without those needing
+to know feeds exist.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/calendar/feeds` | Subscriptions with `event_count` and last sync. **Never returns the URL** — only `url_host` |
+| `POST` | `/api/calendar/feeds` | `{name, url, color}`. Syncs immediately; a feed that can't be read is rejected `400` and not saved |
+| `POST` | `/api/calendar/feeds/{id}/sync` | Re-sync one |
+| `POST` | `/api/calendar/feeds/sync-all` | Re-sync every enabled feed |
+| `PATCH`/`DELETE` | `/api/calendar/feeds/{id}` | `name`, `color`, `enabled`. Deleting removes its imported events too |
+
+**Feed URLs are bearer credentials.** Anyone holding one can read the
+calendar, so the URL is stored server-side and never sent back to the
+browser.
+
+**Identity is a content hash, not the UID.** Feeds exist that regenerate
+every `UID` on every request — the Kronos roster this was built against
+embeds the request timestamp — so deduplicating on UID would produce a full
+set of duplicates on every sync. The hash covers start, end and title, which
+are stable by construction.
+
+**A sync replaces rather than merges** the feed's events across the span the
+feed covers. Shifts get cancelled and moved, not just added, so a cancelled
+one has to be able to disappear.
+
+Times are converted to `OPSDECK_TZ` on import: `DTSTART:20260803T200000Z`
+becomes `2026-08-03T16:00:00` in `America/New_York`. Date-only values
+(`20260814`) import as all-day events.
+
 ### Routines
 
 | Method | Path | Notes |

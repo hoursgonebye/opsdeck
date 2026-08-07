@@ -29,6 +29,7 @@ async function renderCalendar() {
     const base = {
       kind: "event", title: o.title, color: o.color,
       event_id: o.event_id, occurrence: o.occurrence, rrule: o.rrule,
+      feed_id: o.feed_id || null,
     };
 
     if (endDay <= startDay) {
@@ -74,7 +75,7 @@ async function renderCalendar() {
         ${items.slice(0, 4).map((i) => `
           <div class="cal-item ${i.kind} ${i.span ? `span ${i.spanClass}` : ""}"
                title="${escAttr(i.title)}"
-               ${i.kind === "event" ? `data-event="${i.event_id}" data-occ="${i.occurrence}"` : `data-card="${i.card_id}"`}>
+               ${i.kind === "event" ? `data-event="${i.event_id}" data-occ="${i.occurrence}"${i.feed_id ? ` data-feed="${i.feed_id}"` : ""}` : `data-card="${i.card_id}"`}>
             <span class="dot dot-${esc(i.color)}"></span>
             ${i.time ? `<span class="cal-time">${i.time}</span>` : ""}
             <span class="cal-item-text">${esc(i.title)}</span>
@@ -93,6 +94,7 @@ async function renderCalendar() {
         <button class="btn" id="cal-prev">‹</button>
         <button class="btn" id="cal-today">Today</button>
         <button class="btn" id="cal-next">›</button>
+        <button class="btn" id="cal-feeds">Feeds</button>
         <button class="btn primary" id="new-event">+ Event</button>
       </div>
     </div>
@@ -113,6 +115,7 @@ async function renderCalendar() {
     renderCalendar();
   });
   el("new-event").addEventListener("click", () => openEventModal(null));
+  el("cal-feeds").addEventListener("click", openFeedsModal);
 
   panel.querySelectorAll(".cal-cell").forEach((cell) => {
     cell.addEventListener("dblclick", () => openEventModal(null, cell.dataset.date));
@@ -120,6 +123,10 @@ async function renderCalendar() {
   panel.querySelectorAll(".cal-item.event").forEach((item) => {
     item.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (item.dataset.feed) {
+        toast("From a subscribed calendar — edit it at the source", "info", 4500);
+        return;
+      }
       openEventModal(Number(item.dataset.event), null, item.dataset.occ);
     });
   });
@@ -317,4 +324,101 @@ function parseRRule(str) {
     if (k === "UNTIL") out.until = `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`;
   });
   return out;
+}
+
+
+// ---------- subscribed feeds ----------
+// A read-only .ics subscription: a work roster, a class timetable. Its
+// events land in the normal events table, so they appear on Today, the
+// month grid and the merged Us view without those knowing feeds exist.
+async function openFeedsModal() {
+  const feeds = await API.get("/calendar/feeds");
+
+  openModal(`
+    <div class="modal-head">
+      <h2 class="modal-title">Subscribed calendars</h2>
+      <button class="icon-btn" onclick="closeModal()">×</button>
+    </div>
+
+    <div class="feed-list">
+      ${feeds.map((f) => `
+        <div class="feed-row" data-feed="${f.id}">
+          <span class="dot dot-${esc(f.color)}"></span>
+          <span class="feed-main">
+            <span class="feed-name">${esc(f.name)}</span>
+            <span class="card-meta">${esc(f.url_host)} · ${f.event_count} events${
+              f.last_synced_at ? ` · synced ${esc(f.last_synced_at.slice(0, 16))}` : ""}</span>
+            ${f.last_status && f.last_status !== "ok"
+              ? `<span class="feed-err">${esc(f.last_status)}</span>` : ""}
+          </span>
+          <button class="btn tiny" data-sync="${f.id}">Sync</button>
+          <button class="btn tiny danger" data-drop="${f.id}">Remove</button>
+        </div>`).join("") || `<p class="empty-state small">No subscriptions yet.</p>`}
+    </div>
+
+    <label class="field-label">Add a feed</label>
+    <input type="text" id="feed-name" placeholder="Name (e.g. Work)">
+    <input type="text" id="feed-url" placeholder="https://… .ics  or  webcal://…">
+    <div class="field-row">
+      <div>
+        <label class="field-label">Colour</label>
+        <select id="feed-color">
+          ${LABEL_COLORS.map((c) => `<option value="${c}" ${c === "red" ? "selected" : ""}>${c}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <p class="notes-gate-hint">
+      Read-only. Events refresh on each sync, so edits belong at the source.
+      The URL is stored server-side and never sent back to the browser.
+    </p>
+
+    <div class="modal-actions">
+      <button class="btn" id="feed-sync-all">Sync all</button>
+      <button class="btn primary" id="feed-add">Subscribe</button>
+    </div>
+  `, (modal) => {
+    el("feed-add").addEventListener("click", async () => {
+      const url = el("feed-url").value.trim();
+      if (!url) { toast("Paste the feed URL", "error"); return; }
+      const btn = el("feed-add");
+      btn.disabled = true; btn.textContent = "Fetching…";
+      try {
+        const r = await API.post("/calendar/feeds", {
+          name: el("feed-name").value.trim() || "Subscribed calendar",
+          url, color: el("feed-color").value,
+        });
+        toast(`Imported ${r.imported} events`);
+        closeModal(); renderCalendar();
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "Subscribe";
+      }
+    });
+
+    el("feed-sync-all").addEventListener("click", async () => {
+      const r = await API.post("/calendar/feeds/sync-all", {});
+      const okd = r.filter((x) => x.ok).reduce((n, x) => n + (x.imported || 0), 0);
+      const bad = r.filter((x) => !x.ok);
+      toast(bad.length ? `${okd} imported, ${bad.length} failed` : `Synced ${okd} events`,
+            bad.length ? "error" : "info", 5000);
+      closeModal(); renderCalendar();
+    });
+
+    modal.querySelectorAll("[data-sync]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        b.disabled = true; b.textContent = "…";
+        try {
+          const r = await API.post(`/calendar/feeds/${b.dataset.sync}/sync`, {});
+          toast(`Synced ${r.imported} events`);
+        } catch (e) { /* toasted */ }
+        closeModal(); renderCalendar();
+      }));
+
+    modal.querySelectorAll("[data-drop]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        if (!confirm("Unsubscribe? Its imported events are removed too.")) return;
+        const r = await API.del(`/calendar/feeds/${b.dataset.drop}`);
+        toast(`Removed ${r.events_removed} events`);
+        closeModal(); renderCalendar();
+      }));
+  });
 }

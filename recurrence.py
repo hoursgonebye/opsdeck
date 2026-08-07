@@ -91,6 +91,10 @@ def expand_event(event, window_start, window_end, overrides=None):
             "end_at": fmt_dt(occ_start + duration) if end else None,
             "modified": False,
             "kind": "event",
+            # Present when the event came from a subscribed feed. The UI uses
+            # it to mark those read-only: an edit would be silently undone by
+            # the next sync, so offering one would be a lie.
+            "feed_id": event["feed_id"] if "feed_id" in event.keys() else None,
         }
 
         if ov and ov["action"] == "move":

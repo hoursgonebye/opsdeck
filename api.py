@@ -10,6 +10,8 @@ Read API.md for the full endpoint reference.
 """
 import json
 import os
+import re
+import urllib.parse
 import uuid
 from datetime import datetime, timedelta
 from functools import wraps
@@ -18,6 +20,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request, send_file, abort, g
 from werkzeug.utils import secure_filename
 
+import calendars
 import growth
 import health
 import mentor
@@ -314,6 +317,131 @@ def dismiss_quick_note(nid):
     conn.commit()
     conn.close()
     return jsonify({"dismissed": nid})
+
+
+# --------------------------------------------------------- calendar feeds
+# Subscribed read-only .ics feeds. Their events land in the normal events
+# table tagged with feed_id, so Today, the month grid and the merged Us view
+# pick them up without knowing feeds exist.
+
+@api.route("/calendar/feeds", methods=["GET"])
+@require_token
+def list_feeds():
+    conn = connect()
+    rows = many(conn,
+        "SELECT f.*, (SELECT COUNT(*) FROM events e WHERE e.feed_id=f.id) AS event_count "
+        "FROM calendar_feeds f WHERE f.profile_id=? ORDER BY f.id",
+        (active_profile(),))
+    conn.close()
+    # Never hand the URL back to the browser: it is a bearer credential for
+    # the roster, and it has no business sitting in the DOM.
+    for r in rows:
+        r["url_host"] = urllib.parse.urlparse(r.pop("url", "")).netloc
+    return jsonify(rows)
+
+
+@api.route("/calendar/feeds", methods=["POST"])
+@require_token
+def create_feed():
+    d = body()
+    url = (d.get("url") or "").strip()
+    if not url.lower().startswith(("http://", "https://", "webcal://")):
+        return jsonify({"error": "url must be http(s) or webcal"}), 400
+    url = re.sub(r"^webcal://", "https://", url, flags=re.I)
+
+    conn = connect()
+    cur = conn.execute(
+        "INSERT INTO calendar_feeds (profile_id,name,url,color) VALUES (?,?,?,?)",
+        (active_profile(), (d.get("name") or "Subscribed calendar").strip(),
+         url, _safe_color(d.get("color"), "blue")),
+    )
+    fid = cur.lastrowid
+    conn.commit()
+
+    feed = one(conn, "SELECT * FROM calendar_feeds WHERE id=?", (fid,))
+    result = calendars.sync_feed(conn, feed)
+    if not result.get("ok"):
+        # A feed that cannot be read is not worth keeping - report why and
+        # leave nothing behind rather than a permanently broken row.
+        conn.execute("DELETE FROM calendar_feeds WHERE id=?", (fid,))
+        conn.commit()
+        conn.close()
+        return jsonify(result), 400
+    conn.commit()
+    conn.close()
+    return jsonify({"id": fid, **result}), 201
+
+
+@api.route("/calendar/feeds/<int:fid>/sync", methods=["POST"])
+@require_token
+def sync_feed_now(fid):
+    conn = connect()
+    feed = one(conn, "SELECT * FROM calendar_feeds WHERE id=? AND profile_id=?",
+               (fid, active_profile()))
+    if not feed:
+        conn.close()
+        return jsonify({"error": "no such feed"}), 404
+    result = calendars.sync_feed(conn, feed)
+    if not result.get("ok"):
+        conn.execute("UPDATE calendar_feeds SET last_status=?, last_synced_at=datetime('now') "
+                     "WHERE id=?", (result.get("error", "failed")[:200], fid))
+    conn.commit()
+    conn.close()
+    return jsonify(result), 200 if result.get("ok") else 502
+
+
+@api.route("/calendar/feeds/<int:fid>", methods=["PATCH", "DELETE"])
+@require_token
+def modify_feed(fid):
+    conn = connect()
+    feed = one(conn, "SELECT * FROM calendar_feeds WHERE id=? AND profile_id=?",
+               (fid, active_profile()))
+    if not feed:
+        conn.close()
+        return jsonify({"error": "no such feed"}), 404
+
+    if request.method == "DELETE":
+        # Take the imported events with it: leaving orphaned shifts behind
+        # after unsubscribing would be surprising.
+        removed = conn.execute("DELETE FROM events WHERE feed_id=?", (fid,)).rowcount
+        conn.execute("DELETE FROM calendar_feeds WHERE id=?", (fid,))
+        conn.commit()
+        conn.close()
+        return jsonify({"deleted": fid, "events_removed": removed})
+
+    d = body()
+    for f in ("name", "enabled"):
+        if f in d:
+            conn.execute(f"UPDATE calendar_feeds SET {f}=? WHERE id=?", (d[f], fid))
+    if "color" in d:
+        conn.execute("UPDATE calendar_feeds SET color=? WHERE id=?",
+                     (_safe_color(d["color"], "blue"), fid))
+        conn.execute("UPDATE events SET color=? WHERE feed_id=?",
+                     (_safe_color(d["color"], "blue"), fid))
+    conn.commit()
+    out = one(conn, "SELECT * FROM calendar_feeds WHERE id=?", (fid,))
+    conn.close()
+    out["url_host"] = urllib.parse.urlparse(out.pop("url", "")).netloc
+    return jsonify(out)
+
+
+@api.route("/calendar/feeds/sync-all", methods=["POST"])
+@require_token
+def sync_all_feeds():
+    conn = connect()
+    feeds = many(conn, "SELECT * FROM calendar_feeds WHERE profile_id=? AND enabled=1",
+                 (active_profile(),))
+    out = []
+    for feed in feeds:
+        r = calendars.sync_feed(conn, feed)
+        if not r.get("ok"):
+            conn.execute("UPDATE calendar_feeds SET last_status=?, "
+                         "last_synced_at=datetime('now') WHERE id=?",
+                         (r.get("error", "failed")[:200], feed["id"]))
+        out.append({"id": feed["id"], "name": feed["name"], **r})
+    conn.commit()
+    conn.close()
+    return jsonify(out)
 
 
 # ----------------------------------------------------------------- health
