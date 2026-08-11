@@ -40,7 +40,7 @@ around 25 MB of RAM.
 | **Docs** | Upload or author `.md`/`.html`/`.txt`, organised by folder and tags. HTML renders in a sandboxed iframe (scripts run, but in an opaque origin — see [ARCHITECTURE.md](docs/ARCHITECTURE.md#the-docs-iframe-sandbox)). |
 | **Skill tree** | A pan/zoom map of ~450 skills across 12 domains — six security (networking, linux, pentest, defense, crypto, grc) and six programming (python, javascript, c, cpp, html, css). Nodes have levels 0–5 and feed weighted attributes. |
 | **Growth** | Weekly XP derived passively from what you actually did, plus a radar chart of your attribute shape with a ghost outline of four weeks ago. |
-| **Mentor** | A strict examiner that verifies skill level-ups. Chat panel runs on your Claude subscription via a sidecar container. |
+| **Mentor** | A floating aide in the bottom-right corner — encouraging coach for goals, money math, and the week's logistics, and still a strict examiner when verifying skill level-ups. Runs on your Claude subscription via a sidecar container, and reads a nightly deterministic briefing (schedule with shift hours, balances, budgets, routines) so it starts each day already informed. |
 | **Finance** | A ledger built for a sub-10-second phone entry: amount → merchant (autocompleted, pre-fills its usual category and account) → done. CSV import with a new-vs-duplicate preview (Capital One card + 360 Checking, Discover, or a manual column mapper); a 360 import anchors the account's derived balance. Deterministic category rules (first-match by priority, never overriding a manual choice), envelope budgets with rollover and a to-be-budgeted figure, recurring-charge detection, and an AI assist that only sees what rules couldn't classify — and proposes new rules each pass, so it's needed less over time. Integer cents, no stored balances, duplicates always explicit. |
 | **TryHackMe** | Log or sync room completions, map rooms to tree nodes. A completion grants nothing on its own — it opens the door to a verification. |
 
@@ -151,6 +151,7 @@ All configuration is environment variables, read at startup.
 | `OPSDECK_MAX_UPLOAD_MB` | `25` | Per-file upload ceiling. |
 | `OPSDECK_NOTES_MIN_CHARS` | `300` | The notes gate: minimum writeup length before a level-up attempt can open. |
 | `OPSDECK_FEED_SYNC_MINUTES` | `60` | How stale a subscribed `.ics` feed may get before it refetches itself. `0` turns the sweeper off and leaves feeds manual-only. |
+| `OPSDECK_BRIEFING_TIME` | `23:45` | When the mentor's nightly briefing digest is written (local time). Empty disables it. |
 | `ANTHROPIC_API_KEY` | *(empty)* | Optional. Set it and the mentor grades in-app via the API. Leave empty to use queue mode or the subscription-backed sidecar. |
 | `OPSDECK_MENTOR_MODEL` | `claude-sonnet-4-6` | Model used in direct mode. |
 | `OPSDECK_BRIDGE_URL` | `http://terminal:7682` | Where the mentor chat sidecar lives. |

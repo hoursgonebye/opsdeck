@@ -319,6 +319,28 @@ def dismiss_quick_note(nid):
     return jsonify({"dismissed": nid})
 
 
+# ------------------------------------------------------- mentor briefing
+# A deterministic per-profile daily digest the chat mentor reads before
+# answering, so "what's my situation" costs zero model calls to establish.
+# Written nightly by briefing.py's scheduler; these endpoints read it and
+# regenerate it on demand.
+
+@api.route("/mentor/briefing", methods=["GET", "POST"])
+@require_token
+def mentor_briefing():
+    import briefing as _briefing
+    conn = connect()
+    if request.method == "POST":
+        title, briefing_body = _briefing.generate(conn, active_profile())
+        conn.close()
+        return jsonify({"title": title, "body": briefing_body}), 201
+    doc = _briefing.latest(conn, active_profile())
+    conn.close()
+    if not doc:
+        return jsonify({"error": "no briefing yet - POST here to generate one"}), 404
+    return jsonify(doc)
+
+
 # --------------------------------------------------------- calendar feeds
 # Subscribed read-only .ics feeds. Their events land in the normal events
 # table tagged with feed_id, so Today, the month grid and the merged Us view

@@ -262,6 +262,7 @@ There is **no endpoint that sets a level directly.** By design.
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/api/mentor/status` | Direct mode on/off, pending counts |
+| `GET`/`POST` | `/api/mentor/briefing` | The daily digest (profile-scoped). GET returns the latest; POST regenerates now. Written nightly at `OPSDECK_BRIEFING_TIME` into Docs → Briefings — **deterministic, no model calls**, so the chat mentor starts each day informed for free |
 | `POST` | `/api/mentor/chat` | `{message, session}` → proxied to the sidecar |
 | `GET` | `/api/mentor/chat/health` | `{available, logged_in}` |
 | `GET` | `/api/proposals?status=` | Changes awaiting approval |
@@ -528,7 +529,7 @@ say so in `basis`.
 | `PATCH`/`DELETE` | `/api/finance/budgets/{id}` | |
 | `POST` | `/api/finance/budgets/copy-from` | `{source_period, target_period}`, skips existing |
 | `GET` | `/api/finance/summary?period=YYYY-MM` | **The single source of computed truth**: income received, per-category spend vs effective limit (rollover carry included), to-be-budgeted, uncategorized count, derived balances, net position |
-| `GET` | `/api/finance/recurring` | Deterministic: 3+ similar-amount charges at a regular interval. No AI involved |
+| `GET` | `/api/finance/recurring` | Deterministic, tuned for **subscriptions, not habits**: amounts within 2% of the median (identical-cents billing), regular interval, and dropped once stale >2 months — unless the cadence is yearly (300–400d), which gets 14 months of patience. Each row carries `cadence` and `next_expected`. No AI involved |
 
 Rules fire on manual entry (when no category is picked) and on import
 commit; first match wins by priority; a match sets `category_source: rule`

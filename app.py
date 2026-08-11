@@ -18,6 +18,9 @@ from finance import finance
 import finance_ai  # noqa: F401  - registers /api/finance/ai/* on the blueprint
 from recurrence import TZ_NAME
 from calendars import start_auto_sync, AUTO_SYNC_MINUTES
+from briefing import start_scheduler as start_briefings
+
+BRIEFING_TIME = os.environ.get("OPSDECK_BRIEFING_TIME", "23:45")
 
 app = Flask(__name__)
 app.register_blueprint(api)
@@ -85,5 +88,11 @@ if __name__ == "__main__":
     else:
         print("  Calendar feeds: auto-sync off, manual only")
     start_auto_sync(connect)
+
+    # Nightly mentor briefing (deterministic digest, no model calls).
+    if start_briefings(connect, BRIEFING_TIME):
+        print(f"  Mentor briefing: nightly at {BRIEFING_TIME}")
+    else:
+        print("  Mentor briefing: disabled")
 
     app.run(host="0.0.0.0", port=5000)

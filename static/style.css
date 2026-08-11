@@ -1485,3 +1485,48 @@ a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-vis
   padding: 7px 0; border-bottom: 1px solid var(--border); cursor: pointer;
 }
 .fin-rule-off { opacity: 0.55; }
+
+/* ---- Mentor dock ---- */
+/* A corner aide, not a tab: the FAB sits below the modal layer (100) so
+   dialogs still win, and toasts move up out of its way. */
+.toast-stack { bottom: 84px; }
+.mentor-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 90;
+  width: 52px; height: 52px; border-radius: 50%;
+  background: var(--amber); color: var(--on-accent, #10141b);
+  border: none; font-size: 22px; cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s ease;
+}
+.mentor-fab:hover { transform: scale(1.07); }
+.mentor-fab.open { transform: rotate(45deg); }
+.mentor-dock {
+  position: fixed; right: 16px; bottom: 84px; z-index: 90;
+  width: min(420px, calc(100vw - 32px));
+  height: min(560px, calc(100vh - 120px));
+  display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+.mentor-dock[hidden] { display: none; }
+.mentor-dock-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  background: var(--panel-alt);
+}
+.mentor-dock-title { font-weight: 700; font-size: 14px; flex: 1; }
+.mentor-dock .chat-log {
+  flex: 1; overflow-y: auto; padding: 12px;
+}
+.mentor-dock .chat-compose {
+  display: flex; gap: 8px; padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.mentor-dock .chat-compose textarea { flex: 1; resize: none; }
+@media (max-width: 700px) {
+  .mentor-dock {
+    right: 8px; left: 8px; width: auto;
+    bottom: 78px; height: min(70vh, calc(100vh - 140px));
+  }
+}

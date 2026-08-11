@@ -9,7 +9,6 @@ const SECTIONS = {
   tree: renderTree,
   thm: renderThm,
   growth: renderGrowth,
-  chat: renderChat,
   joint: renderJoint,
   health: renderHealth,
   finance: renderFinance,

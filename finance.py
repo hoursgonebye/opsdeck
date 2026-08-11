@@ -30,7 +30,7 @@ import csv
 import hashlib
 import io
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request
 
@@ -1488,35 +1488,41 @@ def summary():
     return jsonify(out)
 
 
-@finance.route("/recurring", methods=["GET"])
-@require_token
-def recurring():
+def compute_recurring(conn, pid):
     """
-    Deterministic recurring-charge detection - a query, not an AI task:
-    same normalized merchant, 3+ debits, amounts within 10% of the median,
-    at a roughly regular interval. The AI layer may *describe* these; it
-    never decides what qualifies.
+    Deterministic recurring-charge detection - a query, not an AI task. The
+    AI layer and the daily briefing *describe* these; nothing else decides
+    what qualifies.
+
+    Tuned for subscriptions, not habits: a subscription bills the same
+    cents on a schedule, so amounts must sit within 2% (or a quarter) of
+    the median - loose enough for a price bump mid-history, far too tight
+    for fast food, where a $24.88 and a $25.88 order are different meals,
+    not a plan. And a "subscription" not seen for two months is an
+    ex-subscription: stale groups are dropped rather than reported forever,
+    unless the cadence itself is yearly (300-400 day gaps), which gets 14
+    months of patience instead.
     """
-    conn = connect()
     rows = many(conn,
         "SELECT t.merchant_raw, t.merchant_normalized, t.posted_date, t.amount_cents "
         "FROM fin_transactions t JOIN fin_accounts a ON a.id=t.account_id "
         "WHERE a.profile_id=? AND t.direction='debit' "
-        "ORDER BY t.merchant_normalized, t.posted_date", (active_profile(),))
-    conn.close()
+        "ORDER BY t.merchant_normalized, t.posted_date", (pid,))
 
     groups = {}
     for r in rows:
         groups.setdefault(r["merchant_normalized"], []).append(r)
 
+    today = datetime.strptime(str(today_local()), "%Y-%m-%d")
     found = []
     for key, txs in groups.items():
-        if len(txs) < 3:
+        if len(txs) < 2:
             continue
         amounts = sorted(t["amount_cents"] for t in txs)
         median = amounts[len(amounts) // 2]
-        similar = [t for t in txs if abs(t["amount_cents"] - median) <= median * 0.10]
-        if len(similar) < 3:
+        tol = max(25, round(median * 0.02))
+        similar = [t for t in txs if abs(t["amount_cents"] - median) <= tol]
+        if len(similar) < 2:
             continue
         dates = sorted(datetime.strptime(t["posted_date"], "%Y-%m-%d") for t in similar)
         gaps = [(b - a).days for a, b in zip(dates, dates[1:]) if (b - a).days > 0]
@@ -1524,20 +1530,45 @@ def recurring():
             continue
         gaps.sort()
         med_gap = gaps[len(gaps) // 2]
-        if not 5 <= med_gap <= 40:
+
+        yearly = 300 <= med_gap <= 400
+        if yearly:
+            if len(similar) < 2:
+                continue
+        else:
+            if len(similar) < 3 or not 5 <= med_gap <= 40:
+                continue
+            # Regularity: most gaps within a third of the median gap.
+            regular = sum(1 for g in gaps if abs(g - med_gap) <= max(3, med_gap / 3))
+            if regular < len(gaps) * 0.6:
+                continue
+
+        last_seen = dates[-1]
+        stale_after = 430 if yearly else max(60, 2 * med_gap)
+        if (today - last_seen).days > stale_after:
             continue
-        # Regularity: most gaps within a third of the median gap.
-        regular = sum(1 for g in gaps if abs(g - med_gap) <= max(3, med_gap / 3))
-        if regular < len(gaps) * 0.6:
-            continue
+
         found.append({
             "merchant": similar[-1]["merchant_raw"],
             "merchant_normalized": key,
             "amount_cents": median,
             "interval_days": med_gap,
+            "cadence": "yearly" if yearly else
+                       ("monthly" if med_gap >= 26 else
+                        "biweekly" if med_gap >= 12 else "weekly"),
             "times_seen": len(similar),
-            "last_seen": similar[-1]["posted_date"],
+            "last_seen": last_seen.strftime("%Y-%m-%d"),
+            "next_expected": (last_seen + timedelta(days=med_gap)).strftime("%Y-%m-%d"),
             "monthly_cost_cents": round(median * 30 / med_gap),
         })
     found.sort(key=lambda f: -f["monthly_cost_cents"])
-    return jsonify(found)
+    return found
+
+
+@finance.route("/recurring", methods=["GET"])
+@require_token
+def recurring():
+    conn = connect()
+    out = compute_recurring(conn, active_profile())
+    conn.close()
+    return jsonify(out)

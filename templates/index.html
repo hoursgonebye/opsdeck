@@ -53,6 +53,24 @@
   <div class="modal" id="modal"></div>
 </div>
 
+<!-- The mentor lives in a corner dock, not a tab: available from every
+     section, because "ask the mentor" shouldn't mean losing your place. -->
+<button class="mentor-fab" id="mentor-fab" title="Mentor" aria-label="Open mentor chat">✦</button>
+<div class="mentor-dock" id="mentor-dock" hidden>
+  <div class="mentor-dock-head">
+    <span class="mentor-dock-title">✦ Mentor</span>
+    <span id="chat-status" class="chat-status"></span>
+    <button class="btn tiny" id="chat-reset">New</button>
+    <button class="icon-btn" id="mentor-close" aria-label="Close">×</button>
+  </div>
+  <div class="chat-log" id="chat-log"></div>
+  <div class="chat-compose">
+    <textarea id="chat-input" rows="1"
+              placeholder="Ask anything… (Enter to send)"></textarea>
+    <button class="btn primary" id="chat-send">Send</button>
+  </div>
+</div>
+
 <div class="toast-stack" id="toast-stack"></div>
 
 <script>

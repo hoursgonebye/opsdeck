@@ -1,39 +1,39 @@
-// Mentor chat: a conversation with Claude Code running in the terminal
-// container. The browser talks to /api/mentor/chat on this origin; the app
-// proxies to the bridge. Nothing here knows the terminal exists.
+// Mentor dock: a floating button in the bottom-right corner that opens a
+// chat drawer over whatever section is on screen. It used to be a full tab;
+// a mentor you have to navigate to is a mentor you stop consulting, so now
+// it follows you everywhere and never steals your place.
+//
+// The conversation still runs on the Claude subscription in the terminal
+// container - the browser talks to /api/mentor/chat on this origin, the app
+// proxies to the bridge, and nothing here knows the terminal exists.
 //
 // History is kept in memory for the tab plus the session id in localStorage,
-// so switching sections and back doesn't wipe the conversation.
+// so closing and reopening the dock doesn't wipe the conversation.
 
 let chatLog = [];
 let chatSession = localStorage.getItem("opsdeck-chat-session") || null;
 let chatBusy = false;
+let chatHealthChecked = false;
 
-async function renderChat() {
-  const panel = el("panel");
-  panel.innerHTML = `
-    <div class="section-head-row">
-      <h1 class="section-title">Mentor</h1>
-      <div class="head-actions">
-        <span id="chat-status" class="chat-status"></span>
-        <button class="btn" id="chat-reset">New conversation</button>
-      </div>
-    </div>
-    <p class="section-sub">
-      Runs on your Claude subscription in the terminal container — it reads
-      your real boards, tree and progress before it answers.
-    </p>
+function initMentorDock() {
+  const fab = el("mentor-fab");
+  const dock = el("mentor-dock");
+  if (!fab || !dock) return;
 
-    <div class="chat-wrap">
-      <div class="chat-log" id="chat-log"></div>
-      <div class="chat-compose">
-        <textarea id="chat-input" rows="1"
-                  placeholder="Ask the mentor… (Enter to send, Shift+Enter for a newline)"></textarea>
-        <button class="btn primary" id="chat-send">Send</button>
-      </div>
-    </div>`;
-
-  paintChat();
+  fab.addEventListener("click", () => {
+    const opening = dock.hidden;
+    dock.hidden = !dock.hidden;
+    fab.classList.toggle("open", opening);
+    if (opening) {
+      paintChat();
+      el("chat-input").focus();
+      if (!chatHealthChecked) { checkChatHealth(); chatHealthChecked = true; }
+    }
+  });
+  el("mentor-close").addEventListener("click", () => {
+    dock.hidden = true;
+    fab.classList.remove("open");
+  });
 
   el("chat-send").addEventListener("click", sendChat);
   el("chat-reset").addEventListener("click", () => {
@@ -49,11 +49,8 @@ async function renderChat() {
   });
   input.addEventListener("input", () => {
     input.style.height = "auto";
-    input.style.height = Math.min(input.scrollHeight, 180) + "px";
+    input.style.height = Math.min(input.scrollHeight, 140) + "px";
   });
-  input.focus();
-
-  checkChatHealth();
 }
 
 async function checkChatHealth() {
@@ -83,12 +80,13 @@ function paintChat() {
   if (!chatLog.length) {
     box.innerHTML = `
       <div class="chat-empty">
-        <p>Ask about your tree, your boards, what to work on next — or open a
-        level-up and let it grade you.</p>
+        <p>Your aide — already briefed on your day, your money, your tree.
+        Ask anything.</p>
         <div class="chat-suggestions">
-          ${["What should I focus on this week?",
-             "Where am I weakest in the tree?",
-             "Look at my overdue cards and tell me what actually matters."]
+          ${["How am I set up for this week?",
+             "How much should I expect from my next paychecks?",
+             "How will my finances look by the end of the month?",
+             "What should I focus on today?"]
             .map((s) => `<button class="chip" data-suggest="${escAttr(s)}">${esc(s)}</button>`).join("")}
         </div>
       </div>`;
@@ -147,3 +145,7 @@ async function sendChat() {
     checkChatHealth();
   }
 }
+
+// The dock's elements are static HTML above the script tags, so this can
+// bind immediately at load.
+initMentorDock();

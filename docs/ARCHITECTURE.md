@@ -56,11 +56,16 @@ There is no message queue, no cache layer, no worker process. For one
 household writing a few hundred rows a day, an in-process SQLite query is
 faster than the network hop to anything else would be.
 
-### The one background thread
+### The background threads
 
-The app runs exactly one thing on a timer: a daemon thread that refetches
-subscribed calendar feeds once they are `OPSDECK_FEED_SYNC_MINUTES` stale
-(`start_auto_sync` in `calendars.py`).
+The app runs two things on timers, both daemon threads started from
+`app.py`'s `__main__` block: the calendar-feed sweeper (`start_auto_sync`
+in `calendars.py`), which refetches subscribed feeds once they are
+`OPSDECK_FEED_SYNC_MINUTES` stale, and the nightly mentor-briefing writer
+(`start_scheduler` in `briefing.py`), which composes a deterministic
+per-profile digest into Docs at `OPSDECK_BRIEFING_TIME`. The briefing
+writer answers "did today's run happen" from the docs table, never from
+memory — the same restart lesson the chat bridge learned with sessions.
 
 It is worth being explicit about why this one deviates, because the
 pattern everywhere else is to do periodic work lazily on read — the mailbox

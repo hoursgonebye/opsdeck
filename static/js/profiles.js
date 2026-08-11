@@ -15,7 +15,8 @@ const ALL_MODULES = [
   { key: "tree", label: "Skill tree", section: "tree" },
   { key: "thm", label: "TryHackMe", section: "thm" },
   { key: "growth", label: "Growth", section: "growth" },
-  { key: "chat", label: "Mentor", section: "chat" },
+  // "chat" is deliberately absent: the mentor is the floating dock in the
+  // bottom-right corner now, present on every section rather than a tab.
   { key: "health", label: "Health", section: "health" },
   { key: "finance", label: "Finance", section: "finance" },
   { key: "joint", label: "Us", section: "joint" },
