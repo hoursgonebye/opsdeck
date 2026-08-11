@@ -6,12 +6,15 @@ async function renderToday() {
   const panel = el("panel");
   panel.innerHTML = `<div class="loading">Loading…</div>`;
 
-  const [data, pendingNotes, healthSummary] = await Promise.all([
+  const wantFinance = (window.OPSDECK.settings?.enabled_modules || []).includes("finance");
+  const [data, pendingNotes, healthSummary, finSummary] = await Promise.all([
     API.get(`/today?date=${todayISO()}`),
     API.get("/notes/quick?status=pending").catch(() => []),
     // Optional: the profile may have Health switched off, or have no
     // readings yet. Either way Today should still render.
     API.get("/health/summary?days=7").catch(() => ({})),
+    // Same deal for Finance - absent or erroring, Today still renders.
+    wantFinance ? API.get("/finance/summary").catch(() => null) : Promise.resolve(null),
   ]);
 
   const eventsHtml = data.events.length
@@ -123,11 +126,50 @@ async function renderToday() {
        </button>`
     : "";
 
+  // ---- finance glance ----
+  // Month spend, the envelopes closest to their limits, and how many
+  // transactions still need filing. One tap through to the entry form.
+  let financeStrip = "";
+  if (finSummary && finSummary.balances.length) {
+    const nearest = finSummary.categories
+      .filter((c) => c.limit_cents != null && c.effective_limit_cents > 0)
+      .sort((a, b) => (b.spent_cents / b.effective_limit_cents)
+                    - (a.spent_cents / a.effective_limit_cents))
+      .slice(0, 3);
+    const money = (c) => "$" + (Math.abs(c) / 100).toLocaleString(undefined,
+      { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    financeStrip = `
+      <button class="health-strip" id="finance-strip" title="Open Finance">
+        <div class="hs-item">
+          <span class="hs-label">Spent this month</span>
+          <span class="hs-value">${money(finSummary.spend_total_cents)}</span>
+        </div>
+        ${nearest.map((c) => {
+          const pct = Math.round((c.spent_cents / c.effective_limit_cents) * 100);
+          return `
+            <div class="hs-item">
+              <span class="hs-label">${esc(c.name)}</span>
+              <span class="hs-value">${pct}%</span>
+              ${c.remaining_cents < 0
+                ? `<span class="hs-delta up">over</span>`
+                : ""}
+            </div>`;
+        }).join("")}
+        ${finSummary.uncategorized.count ? `
+          <div class="hs-item">
+            <span class="hs-label">Unfiled</span>
+            <span class="hs-value">${finSummary.uncategorized.count}</span>
+          </div>` : ""}
+        <span class="hs-more">›</span>
+      </button>`;
+  }
+
   panel.innerHTML = `
     <h1 class="section-title">Today</h1>
     <p class="section-sub">${fmtDateLong(data.date)}</p>
 
     ${healthStrip}
+    ${financeStrip}
 
     <div class="quick-note">
       <textarea id="qn-input" rows="1" placeholder="Quick note — anything, file it later…"></textarea>
@@ -203,6 +245,7 @@ async function renderToday() {
   });
 
   el("health-strip")?.addEventListener("click", () => go("health"));
+  el("finance-strip")?.addEventListener("click", () => go("finance"));
 
   panel.querySelectorAll(".routine-row").forEach((row) => {
     row.addEventListener("click", async () => {

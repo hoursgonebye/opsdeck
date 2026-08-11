@@ -1,19 +1,17 @@
-// Finance: a personal ledger. Phase 1 - accounts, fast manual entry, the
-// transaction list, and CSV import with preview.
+// Finance: a personal ledger with envelope budgets and an AI assist.
 //
-// The quick-entry form is the whole point of this section: if logging a
-// purchase takes more than a few seconds it stops happening, so the form
-// stays mounted, resets and refocuses after every submit, and pre-fills
-// category + account from the merchant's history. Everything else is
-// secondary to that loop.
-//
-// Money crosses the wire as a decimal *string* (the server owns the
-// cents conversion) or as integer cents coming back. Nothing here does
-// arithmetic on amounts beyond formatting them.
+// Two views behind one section. Ledger is the quick-entry form (the whole
+// point - log a purchase in seconds) plus the transaction list; Budgets is
+// balances, envelopes, to-be-budgeted, recurring charges, and the AI
+// review/ask panel. The overview strip on top shows what the accounts are
+// actually worth, derived server-side from each account's balance anchor
+// plus the ledger - nothing here computes money, it only formats cents.
 
 let fFilters = { account_id: "", category_id: "", uncategorized: false, q: "" };
-let fCache = { accounts: [], categories: [], merchants: [] };
+let fCache = { accounts: [], categories: [], merchants: [], summary: null };
 let fNextBefore = null;
+let fView = "ledger";                       // ledger | budgets
+let fPeriod = null;                         // YYYY-MM, defaults to current
 
 function fmtMoney(cents) {
   const d = Math.abs(cents) / 100;
@@ -25,21 +23,31 @@ function finCatChip(t) {
     return `<span class="chip static c-amber">unfiled</span>`;
   }
   const color = t.category_color || "gray";
-  return `<span class="chip static c-${esc(color)}">${esc(t.category_name)}</span>`;
+  const aiMark = t.category_source === "ai" ? " ✦" : "";
+  return `<span class="chip static c-${esc(color)}" title="${
+    t.category_source === "ai" ? "categorized by AI - click row to review" : ""
+  }">${esc(t.category_name)}${aiMark}</span>`;
 }
 
 function finAcctKey() { return `finAcct:${window.OPSDECK.activeProfile || "primary"}`; }
 
+function thisMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+}
+
 async function renderFinance() {
   const panel = el("panel");
   panel.innerHTML = `<div class="loading">Loading…</div>`;
+  if (!fPeriod) fPeriod = thisMonth();
 
-  const [accounts, categories, merchants] = await Promise.all([
+  const [accounts, categories, merchants, summary] = await Promise.all([
     API.get("/finance/accounts"),
     API.get("/finance/categories"),
     API.get("/finance/merchants"),
+    API.get(`/finance/summary?period=${fPeriod}`).catch(() => null),
   ]);
-  fCache = { accounts, categories, merchants };
+  fCache = { accounts, categories, merchants, summary };
 
   if (!accounts.length) {
     panel.innerHTML = `
@@ -67,22 +75,67 @@ async function renderFinance() {
     return;
   }
 
-  const lastAcct = localStorage.getItem(finAcctKey());
-  const active = accounts.filter((a) => a.is_active);
-  const spend = categories.filter((c) => !c.is_income && !c.is_transfer);
-  const income = categories.filter((c) => c.is_income);
-  const transfer = categories.filter((c) => c.is_transfer);
+  // ---- overview strip: what everything is worth, server-derived ----
+  const balances = summary ? summary.balances : [];
+  const strip = balances.map((b) => `
+    <div class="fin-tile" title="${escAttr(b.basis)}">
+      <div class="h-label">${esc(b.name)}${b.type === "credit" ? " (owed)" : ""}</div>
+      <div class="h-value ${b.type === "credit" && b.balance_cents > 0 ? "fin-neg" : ""}">
+        ${b.balance_cents < 0 ? "−" : ""}${fmtMoney(b.balance_cents)}</div>
+      <div class="h-sub">${b.basis.startsWith("anchored") ? "as of " + esc(b.basis.slice(9)) : "unanchored estimate"}</div>
+    </div>`).join("");
+  const netTile = summary ? `
+    <div class="fin-tile fin-net">
+      <div class="h-label">Net position</div>
+      <div class="h-value ${summary.net_cents < 0 ? "fin-neg" : ""}">
+        ${summary.net_cents < 0 ? "−" : ""}${fmtMoney(summary.net_cents)}</div>
+      <div class="h-sub">accounts − cards</div>
+    </div>` : "";
 
   panel.innerHTML = `
     <div class="section-head-row">
       <h1 class="section-title">Finance</h1>
       <div class="head-actions">
         <button class="btn" id="fin-import">Import CSV</button>
+        <button class="btn" id="fin-rules">Rules</button>
         <button class="btn" id="fin-accounts">Accounts</button>
         <button class="btn" id="fin-categories">Categories</button>
       </div>
     </div>
 
+    <div class="fin-tiles">${strip}${netTile}</div>
+
+    <div class="h-controls">
+      <div class="h-views">
+        <button class="board-tab ${fView === "ledger" ? "active" : ""}" data-fview="ledger">Ledger</button>
+        <button class="board-tab ${fView === "budgets" ? "active" : ""}" data-fview="budgets">Budgets</button>
+      </div>
+    </div>
+    <div id="fin-body"></div>`;
+
+  panel.querySelectorAll("[data-fview]").forEach((b) =>
+    b.addEventListener("click", () => { fView = b.dataset.fview; renderFinance(); }));
+  el("fin-import").addEventListener("click", openImportModal);
+  el("fin-rules").addEventListener("click", openRulesModal);
+  el("fin-accounts").addEventListener("click", openAccountsModal);
+  el("fin-categories").addEventListener("click", openCategoriesModal);
+
+  if (fView === "budgets") renderBudgetsView(el("fin-body"));
+  else renderLedgerView(el("fin-body"));
+}
+
+// =================================================================== ledger
+
+function renderLedgerView(box) {
+  const { accounts, categories, merchants, summary } = fCache;
+  const lastAcct = localStorage.getItem(finAcctKey());
+  const active = accounts.filter((a) => a.is_active);
+  const spend = categories.filter((c) => !c.is_income && !c.is_transfer);
+  const income = categories.filter((c) => c.is_income);
+  const transfer = categories.filter((c) => c.is_transfer);
+  const unfiled = summary ? summary.uncategorized.count : 0;
+
+  box.innerHTML = `
     <div class="joint-card fin-quick">
       <form id="fin-quick-form">
         <div class="fin-quick-grid">
@@ -91,7 +144,7 @@ async function renderFinance() {
           <input type="text" id="fq-merchant" placeholder="Merchant" autocomplete="off"
                  list="fin-merchants">
           <datalist id="fin-merchants">
-            ${fCache.merchants.map((m) => `<option value="${escAttr(m.merchant)}">`).join("")}
+            ${merchants.map((m) => `<option value="${escAttr(m.merchant)}">`).join("")}
           </datalist>
           <select id="fq-category">
             <option value="">Category…</option>
@@ -115,6 +168,8 @@ async function renderFinance() {
         <label class="fin-income-toggle">
           <input type="checkbox" id="fq-credit"> money in (income / refund)
         </label>
+        <span class="settings-hint">No category picked? Rules file known merchants
+        automatically.</span>
       </form>
     </div>
 
@@ -130,15 +185,14 @@ async function renderFinance() {
         </select>
         <button class="chip ${fFilters.uncategorized ? "on c-amber" : ""}" id="ff-unfiled">unfiled</button>
         <input type="text" id="ff-q" placeholder="Search…" value="${escAttr(fFilters.q)}">
+        ${unfiled > 0 ? `<button class="btn small" id="fin-ai-cat">✦ AI categorize (${unfiled})</button>` : ""}
       </div>
       <div id="fin-list"><div class="loading">Loading…</div></div>
     </div>`;
 
-  // ---- quick entry ----
   const amountIn = el("fq-amount");
   amountIn.focus();
 
-  // Picking a known merchant pre-fills where it usually goes.
   el("fq-merchant").addEventListener("change", () => {
     const m = fCache.merchants.find(
       (x) => x.merchant.toLowerCase() === el("fq-merchant").value.trim().toLowerCase());
@@ -167,9 +221,11 @@ async function renderFinance() {
     const btn = el("fq-log");
     btn.disabled = true;
     try {
-      await postTransaction(payload);
+      const tx = await postTransaction(payload);
       localStorage.setItem(finAcctKey(), String(payload.account_id));
-      toast(`Logged ${merchant} — ${amount.startsWith("$") ? amount : "$" + amount}`);
+      toast(tx.category_source === "rule"
+        ? `Logged ${merchant} → filed by rule`
+        : `Logged ${merchant} — ${amount.startsWith("$") ? amount : "$" + amount}`);
       amountIn.value = ""; el("fq-merchant").value = "";
       el("fq-category").value = ""; el("fq-credit").checked = false;
       amountIn.focus();
@@ -180,7 +236,6 @@ async function renderFinance() {
     }
   });
 
-  // ---- filters ----
   el("ff-account").addEventListener("change", (e) => {
     fFilters.account_id = e.target.value; loadTransactions(true);
   });
@@ -198,10 +253,7 @@ async function renderFinance() {
     clearTimeout(qt);
     qt = setTimeout(() => { fFilters.q = e.target.value.trim(); loadTransactions(true); }, 300);
   });
-
-  el("fin-import").addEventListener("click", openImportModal);
-  el("fin-accounts").addEventListener("click", openAccountsModal);
-  el("fin-categories").addEventListener("click", openCategoriesModal);
+  el("fin-ai-cat")?.addEventListener("click", openAiCategorize);
 
   loadTransactions(true);
 }
@@ -226,7 +278,6 @@ async function refreshMerchants() {
   if (dl) dl.innerHTML = fCache.merchants.map((m) => `<option value="${escAttr(m.merchant)}">`).join("");
 }
 
-// ---------- the list ----------
 // Re-renders only its own container: a full renderFinance() after every
 // submit would steal focus from the quick form and defeat its purpose.
 async function loadTransactions(reset) {
@@ -299,7 +350,7 @@ async function openTxModal(id) {
       <button class="icon-btn" onclick="closeModal()">×</button>
     </div>
     <p class="card-meta">${esc(t.account_name)} · logged via ${esc(t.source)} ·
-      category set by ${esc(t.category_source)}</p>
+      category set by ${esc(t.category_source)}${t.category_source === "ai" ? " ✦" : ""}</p>
 
     <div class="field-row">
       <div><label class="field-label">Amount</label>
@@ -332,17 +383,345 @@ async function openTxModal(id) {
         notes: el("tx-notes").value.trim(),
         is_pending: el("tx-pending").checked ? 1 : 0,
       });
-      toast("Saved"); closeModal(); loadTransactions(true);
+      toast("Saved"); closeModal(); renderFinance();
     });
     el("tx-delete").addEventListener("click", async () => {
       if (!confirm("Delete this transaction? There is no undo.")) return;
       await API.del(`/finance/transactions/${id}`);
-      toast("Deleted"); closeModal(); loadTransactions(true); refreshMerchants();
+      toast("Deleted"); closeModal(); renderFinance();
     });
   });
 }
 
-// ---------- accounts ----------
+// ================================================================== budgets
+
+async function renderBudgetsView(box) {
+  const s = fCache.summary;
+  if (!s) { box.innerHTML = `<p class="empty-state">Could not load summary.</p>`; return; }
+
+  const [y, m] = fPeriod.split("-").map(Number);
+  const prev = m === 1 ? `${y - 1}-12` : `${y}-${pad(m - 1)}`;
+  const next = m === 12 ? `${y + 1}-01` : `${y}-${pad(m + 1)}`;
+  const monthName = new Date(y, m - 1, 1).toLocaleDateString(undefined,
+    { month: "long", year: "numeric" });
+
+  const budgeted = s.categories.filter((c) => c.limit_cents != null);
+  const unbudgeted = s.categories.filter((c) => c.limit_cents == null && c.spent_cents !== 0);
+  const tbb = s.to_be_budgeted_cents;
+
+  const bar = (c) => {
+    const limit = c.effective_limit_cents || 1;
+    const pct = Math.min(100, Math.max(0, (c.spent_cents / limit) * 100));
+    const over = c.remaining_cents < 0;
+    return `
+      <div class="fin-env" data-cat="${c.id}">
+        <div class="fin-env-head">
+          <span class="dot dot-${esc(c.color || "gray")}"></span>
+          <span class="fin-env-name">${esc(c.name)}</span>
+          <span class="mono ${over ? "fin-neg" : ""}">${fmtMoney(c.spent_cents)}
+            / ${fmtMoney(c.effective_limit_cents)}</span>
+        </div>
+        <div class="h-wd-bar fin-env-bar ${over ? "over" : ""}">
+          <span style="width:${pct}%"></span></div>
+        <div class="card-meta">
+          ${over ? `over by ${fmtMoney(-c.remaining_cents)}` : `${fmtMoney(c.remaining_cents)} left`}
+          ${c.rollover ? ` · rollover${c.carry_cents ? ` (carry ${c.carry_cents < 0 ? "−" : ""}${fmtMoney(c.carry_cents)})` : ""}` : ""}
+          <button class="btn tiny" data-edit-env="${c.id}">Edit</button>
+        </div>
+      </div>`;
+  };
+
+  box.innerHTML = `
+    <div class="joint-card">
+      <div class="block-title-row">
+        <div class="block-title">
+          <button class="btn tiny" id="bud-prev">‹</button>
+          ${monthName}
+          <button class="btn tiny" id="bud-next">›</button>
+        </div>
+        <span class="card-meta">income received ${fmtMoney(s.income_received_cents)}
+          · spent ${fmtMoney(s.spend_total_cents)}</span>
+      </div>
+
+      <div class="fin-tbb ${tbb < 0 ? "fin-neg" : ""}">
+        <span class="h-label">To be budgeted</span>
+        <span class="h-value">${tbb < 0 ? "−" : ""}${fmtMoney(tbb)}</span>
+        ${tbb < 0 ? `<span class="card-meta">budgets exceed income received this month</span>` : ""}
+      </div>
+
+      ${budgeted.map(bar).join("") || `<p class="empty-state small">No envelopes for ${monthName} yet.</p>`}
+
+      <div class="field-row-inline">
+        <select id="bud-cat">
+          <option value="">Add envelope…</option>
+          ${s.categories.filter((c) => c.limit_cents == null)
+            .map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}
+        </select>
+        <input type="text" id="bud-limit" inputmode="decimal" placeholder="Limit" class="mono">
+        <label class="fin-income-toggle"><input type="checkbox" id="bud-roll"> rollover</label>
+        <button class="btn" id="bud-add">Set</button>
+        <button class="btn" id="bud-copy">Copy last month</button>
+      </div>
+
+      ${unbudgeted.length ? `
+        <p class="settings-hint">Spending without an envelope:
+          ${unbudgeted.map((c) => `${esc(c.name)} ${fmtMoney(c.spent_cents)}`).join(" · ")}
+          ${s.uncategorized.count ? ` · unfiled ${fmtMoney(s.uncategorized.spent_cents)}` : ""}</p>` : ""}
+    </div>
+
+    <div class="fin-two-col">
+      <div class="joint-card">
+        <div class="block-title-row">
+          <div class="block-title">Recurring charges</div>
+          <span class="card-meta">detected from the ledger</span>
+        </div>
+        <div id="fin-recurring"><div class="loading">Scanning…</div></div>
+      </div>
+
+      <div class="joint-card">
+        <div class="block-title-row">
+          <div class="block-title">✦ Review</div>
+          <button class="btn tiny" id="rev-gen">Generate for ${monthName}</button>
+        </div>
+        <div id="fin-review"><div class="loading">Loading…</div></div>
+        <div class="field-row-inline fin-ask">
+          <input type="text" id="ask-q" placeholder="Ask — e.g. can I afford $80 on tools this month?">
+          <button class="btn" id="ask-go">Ask</button>
+        </div>
+        <div id="ask-out"></div>
+      </div>
+    </div>`;
+
+  el("bud-prev").addEventListener("click", () => { fPeriod = prev; renderFinance(); });
+  el("bud-next").addEventListener("click", () => { fPeriod = next; renderFinance(); });
+
+  el("bud-add").addEventListener("click", async () => {
+    const cid = el("bud-cat").value;
+    const limit = el("bud-limit").value.trim();
+    if (!cid || !limit) { toast("Pick a category and a limit", "error"); return; }
+    await API.post("/finance/budgets", {
+      category_id: Number(cid), period_start: `${fPeriod}-01`,
+      limit, rollover: el("bud-roll").checked,
+    });
+    toast("Envelope set"); renderFinance();
+  });
+
+  el("bud-copy").addEventListener("click", async () => {
+    const r = await API.post("/finance/budgets/copy-from",
+      { source_period: prev, target_period: fPeriod });
+    toast(r.copied ? `Copied ${r.copied} envelopes from last month`
+                   : "Nothing to copy (or all already set)");
+    renderFinance();
+  });
+
+  box.querySelectorAll("[data-edit-env]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const c = budgeted.find((x) => x.id === Number(b.dataset.editEnv));
+      const val = prompt(`Monthly limit for ${c.name} ($):`,
+                         (c.limit_cents / 100).toFixed(2));
+      if (val === null) return;
+      if (val.trim() === "" || val.trim() === "0") {
+        API.del(`/finance/budgets/${c.budget_id}`).then(() => renderFinance());
+      } else {
+        API.post("/finance/budgets", {
+          category_id: c.id, period_start: `${fPeriod}-01`, limit: val.trim(),
+          rollover: c.rollover,
+        }).then(() => renderFinance());
+      }
+    }));
+
+  loadRecurring();
+  loadReview();
+
+  el("rev-gen").addEventListener("click", async () => {
+    const btn = el("rev-gen");
+    btn.disabled = true; btn.textContent = "Thinking…";
+    try {
+      await API.post("/finance/ai/reviews/generate", { period_start: `${fPeriod}-01` });
+      loadReview();
+    } catch (e) { /* toasted */ }
+    btn.disabled = false; btn.textContent = `Generate for ${monthName}`;
+  });
+
+  el("ask-go").addEventListener("click", askFinance);
+  el("ask-q").addEventListener("keydown", (e) => { if (e.key === "Enter") askFinance(); });
+}
+
+async function loadRecurring() {
+  const box = el("fin-recurring");
+  if (!box) return;
+  const rec = await API.get("/finance/recurring").catch(() => []);
+  box.innerHTML = rec.length ? rec.slice(0, 10).map((r) => `
+    <div class="feed-row">
+      <span class="feed-main">
+        <span class="feed-name">${esc(r.merchant)}</span>
+        <span class="card-meta">~${fmtMoney(r.amount_cents)} every ${r.interval_days}d ·
+          seen ${r.times_seen}× · last ${fmtDate(r.last_seen)}</span>
+      </span>
+      <span class="mono">${fmtMoney(r.monthly_cost_cents)}/mo</span>
+    </div>`).join("")
+    : `<p class="empty-state small">Nothing recurring detected yet — needs three
+       similar charges at a regular interval.</p>`;
+}
+
+async function loadReview() {
+  const box = el("fin-review");
+  if (!box) return;
+  const revs = await API.get(`/finance/ai/reviews?period=${fPeriod}`).catch(() => []);
+  box.innerHTML = revs.length
+    ? `<p class="fin-review-body">${esc(revs[0].body)}</p>
+       <span class="card-meta">generated ${esc((revs[0].created_at || "").slice(0, 16))}</span>`
+    : `<p class="empty-state small">No review for this month yet.</p>`;
+}
+
+async function askFinance() {
+  const q = el("ask-q").value.trim();
+  if (!q) return;
+  const out = el("ask-out");
+  out.innerHTML = `<div class="loading">Thinking…</div>`;
+  try {
+    const r = await API.post("/finance/ai/ask", { question: q });
+    out.innerHTML = `<p class="fin-review-body">${esc(r.answer)}</p>`;
+  } catch (e) {
+    out.innerHTML = "";
+  }
+}
+
+// ============================================================ AI categorize
+
+async function openAiCategorize() {
+  openModal(`
+    <div class="modal-head">
+      <h2 class="modal-title">✦ AI categorize</h2>
+      <button class="icon-btn" onclick="closeModal()">×</button>
+    </div>
+    <div id="aic-body"><div class="loading">Rules first, then the model…</div></div>
+  `, async () => {
+    let r;
+    try {
+      r = await API.post("/finance/ai/categorize", {});
+    } catch (e) {
+      el("aic-body").innerHTML = `<p class="empty-state">${esc(e.message)}</p>`;
+      return;
+    }
+    if (!r.suggestions.length) {
+      el("aic-body").innerHTML = `
+        <p class="empty-state">${r.ruled
+          ? `Rules filed ${r.ruled} on their own — nothing left for the model.`
+          : "No suggestions."}</p>`;
+      if (r.ruled) { loadTransactions(true); }
+      return;
+    }
+    el("aic-body").innerHTML = `
+      ${r.ruled ? `<p class="settings-hint">Rules filed ${r.ruled} first; the model saw only the rest.</p>` : ""}
+      ${r.rules_suggested ? `<p class="settings-hint">${r.rules_suggested} new rules proposed — review them under Rules (inactive until you enable them).</p>` : ""}
+      ${r.suggestions.map((s, i) => `
+        <label class="fin-sugg">
+          <input type="checkbox" data-sugg="${i}" ${s.confidence >= 0.7 ? "checked" : ""}>
+          <span class="feed-main">
+            <span class="feed-name">#${s.transaction_id}</span>
+            <span class="card-meta">→ ${esc(s.category_name)} · ${Math.round(s.confidence * 100)}%</span>
+          </span>
+        </label>`).join("")}
+      <div class="modal-actions">
+        <button class="btn primary" id="aic-accept">Accept checked</button>
+      </div>`;
+    el("aic-accept").addEventListener("click", async () => {
+      const chosen = [...document.querySelectorAll("[data-sugg]:checked")]
+        .map((c) => r.suggestions[Number(c.dataset.sugg)])
+        .map((s) => ({ transaction_id: s.transaction_id, category_id: s.category_id }));
+      if (!chosen.length) { toast("Nothing checked", "error"); return; }
+      const res = await API.post("/finance/ai/categorize/accept", { accepted: chosen });
+      toast(`Applied ${res.applied}${res.skipped ? `, ${res.skipped} already handled` : ""}`);
+      closeModal(); renderFinance();
+    });
+  });
+}
+
+// ==================================================================== rules
+
+async function openRulesModal() {
+  const rules = await API.get("/finance/rules");
+  const cats = fCache.categories;
+  openModal(`
+    <div class="modal-head">
+      <h2 class="modal-title">Category rules</h2>
+      <button class="icon-btn" onclick="closeModal()">×</button>
+    </div>
+    <p class="settings-hint">First match wins, by priority. Rules file new and
+    imported transactions; they never touch anything you categorized by hand.</p>
+    <div class="fin-cat-list">
+      ${rules.map((r) => `
+        <div class="feed-row ${r.is_active ? "" : "fin-rule-off"}">
+          <span class="feed-main">
+            <span class="feed-name mono">${esc(r.match_type)} “${esc(r.pattern)}”</span>
+            <span class="card-meta">→ ${esc(r.category_name)} · p${r.priority}
+              ${r.origin === "ai_suggested" ? " · ✦ suggested" : ""}
+              ${r.hit_count ? ` · ${r.hit_count} hits` : ""}
+              ${r.account_name ? ` · ${esc(r.account_name)} only` : ""}</span>
+          </span>
+          <button class="btn tiny" data-rtoggle="${r.id}" data-on="${r.is_active}">
+            ${r.is_active ? "Disable" : "Enable"}</button>
+          <button class="btn tiny danger" data-rdrop="${r.id}">Delete</button>
+        </div>`).join("") || `<p class="empty-state small">No rules yet. The AI can
+          propose some, or add one below.</p>`}
+    </div>
+    <label class="field-label">Add a rule</label>
+    <div class="field-row-inline">
+      <select id="rule-type">
+        <option value="contains">contains</option>
+        <option value="starts_with">starts with</option>
+        <option value="exact">exact</option>
+        <option value="regex">regex</option>
+      </select>
+      <input type="text" id="rule-pattern" placeholder="pattern (matches lowercase merchant)">
+      <select id="rule-cat">
+        ${cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}
+      </select>
+      <button class="btn primary" id="rule-add">Add</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="rules-dry">Preview run</button>
+      <button class="btn primary" id="rules-run">Run on unfiled</button>
+    </div>
+    <div id="rules-out"></div>
+  `, (modal) => {
+    el("rule-add").addEventListener("click", async () => {
+      const pattern = el("rule-pattern").value.trim();
+      if (!pattern) { toast("Pattern required", "error"); return; }
+      await API.post("/finance/rules", {
+        match_type: el("rule-type").value, pattern,
+        category_id: Number(el("rule-cat").value),
+      });
+      toast("Rule added"); closeModal(); openRulesModal();
+    });
+    modal.querySelectorAll("[data-rtoggle]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        await API.patch(`/finance/rules/${b.dataset.rtoggle}`,
+                        { is_active: b.dataset.on === "1" ? 0 : 1 });
+        closeModal(); openRulesModal();
+      }));
+    modal.querySelectorAll("[data-rdrop]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        await API.del(`/finance/rules/${b.dataset.rdrop}`);
+        closeModal(); openRulesModal();
+      }));
+    const run = async (dry) => {
+      const r = await API.post(`/finance/rules/apply?dry_run=${dry}`);
+      el("rules-out").innerHTML = `
+        <p class="settings-hint">${dry ? "Would file" : "Filed"} ${r.matched}
+        of ${r.scanned} unfiled transactions.</p>
+        ${r.changes.slice(0, 20).map((c) =>
+          `<div class="card-meta">${esc(c.merchant)} → ${esc(c.category_name)}</div>`).join("")}`;
+      if (!dry && r.matched) { loadTransactions(true); }
+    };
+    el("rules-dry").addEventListener("click", () => run(true));
+    el("rules-run").addEventListener("click", () => run(false));
+  });
+}
+
+// ================================================================= accounts
+
 async function openAccountsModal() {
   const accounts = await API.get("/finance/accounts");
   openModal(`
@@ -354,8 +733,11 @@ async function openAccountsModal() {
       <div class="feed-row">
         <span class="feed-main">
           <span class="feed-name">${esc(a.name)} ${a.is_active ? "" : "· retired"}</span>
-          <span class="card-meta">${esc(a.type)}${a.institution ? " · " + esc(a.institution) : ""} · ${a.tx_count} transactions</span>
+          <span class="card-meta">${esc(a.type)}${a.institution ? " · " + esc(a.institution) : ""}
+            · ${a.tx_count} transactions
+            ${a.balance_anchor_date ? ` · anchored ${esc(a.balance_anchor_date)}` : " · no balance anchor"}</span>
         </span>
+        <button class="btn tiny" data-anchor="${a.id}">Set balance</button>
         <button class="btn tiny" data-toggle="${a.id}" data-on="${a.is_active}">
           ${a.is_active ? "Retire" : "Restore"}</button>
       </div>`).join("")}
@@ -369,8 +751,9 @@ async function openAccountsModal() {
       <input type="text" id="acc-inst" placeholder="Institution (optional)">
       <button class="btn primary" id="acc-add">Add</button>
     </div>
-    <p class="notes-gate-hint">Retiring an account hides it from entry; its
-    history stays. Accounts are never deleted — the ledger is the record.</p>
+    <p class="notes-gate-hint">"Set balance" anchors the account: today's true
+    balance (for cards, the amount owed), from which the shown balance is
+    derived as the ledger grows. A 360 Checking import anchors automatically.</p>
   `, (modal) => {
     el("acc-add").addEventListener("click", async () => {
       const name = el("acc-name").value.trim();
@@ -387,10 +770,24 @@ async function openAccountsModal() {
                         { is_active: b.dataset.on === "1" ? 0 : 1 });
         closeModal(); renderFinance();
       }));
+    modal.querySelectorAll("[data-anchor]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const a = accounts.find((x) => x.id === Number(b.dataset.anchor));
+        const val = prompt(
+          a.type === "credit"
+            ? `Current amount owed on ${a.name} ($):`
+            : `Current balance of ${a.name} ($):`);
+        if (val === null || !val.trim()) return;
+        try {
+          await API.patch(`/finance/accounts/${a.id}`, { balance: val.trim() });
+          toast("Anchored"); closeModal(); renderFinance();
+        } catch (e) { /* toasted */ }
+      }));
   });
 }
 
-// ---------- categories ----------
+// =============================================================== categories
+
 async function openCategoriesModal() {
   const cats = await API.get("/finance/categories");
   openModal(`
@@ -429,9 +826,11 @@ async function openCategoriesModal() {
   });
 }
 
-// ---------- CSV import ----------
+// =============================================================== CSV import
 // upload -> preview (nothing written) -> user reviews new vs duplicate ->
 // commit. Duplicates ship with an explicit per-row "import anyway" check.
+// Formats that carry a running balance (360 Checking) also anchor the
+// account's derived balance at commit.
 let fPreview = null;
 
 async function openImportModal() {
@@ -447,9 +846,9 @@ async function openImportModal() {
     </select>
     <label class="field-label">File</label>
     <input type="file" id="imp-file" accept=".csv,text/csv">
-    <p class="notes-gate-hint">Capital One and Discover exports are recognized
-    automatically; anything else asks you to point at the right columns.
-    Nothing is written until you confirm the preview.</p>
+    <p class="notes-gate-hint">Capital One (card and 360 Checking) and Discover
+    exports are recognized automatically; anything else asks you to point at
+    the right columns. Nothing is written until you confirm the preview.</p>
     <div id="imp-body"></div>
     <div class="modal-actions">
       <button class="btn primary" id="imp-preview">Preview</button>
@@ -471,9 +870,6 @@ async function runImportPreview(mapping) {
   try {
     r = await API.upload("/finance/import/preview", fd);
   } catch (err) {
-    // 422 = unrecognized format; the response carried the headers, but the
-    // API client throws on non-2xx - refetch shape via a manual fetch is
-    // overkill, so parse headers client-side for the mapping UI instead.
     if (/unrecognized format/.test(err.message)) {
       const text = await file.text();
       const headers = text.split(/\r?\n/)[0].split(",").map((h) => h.replace(/^"|"$/g, "").trim());
@@ -491,6 +887,8 @@ async function runImportPreview(mapping) {
         r.skipped_unparseable ? ` · ${r.skipped_unparseable} unparseable` : ""}</div>
       <span class="card-meta">${esc(r.format || "custom")}</span>
     </div>
+    ${r.anchor ? `<p class="settings-hint">Ending balance ${fmtMoney(r.anchor.cents)}
+      as of ${esc(r.anchor.date)} — will anchor this account's balance.</p>` : ""}
     <div class="h-table-wrap fin-preview">
       <table class="h-table"><thead>
         <tr><th>Date</th><th>Merchant</th><th>Amount</th><th></th></tr></thead>
@@ -523,9 +921,10 @@ async function runImportPreview(mapping) {
     btn.disabled = true; btn.textContent = "Importing…";
     const res = await API.post("/finance/import/commit", {
       account_id: Number(el("imp-account").value), rows,
+      anchor: fPreview.anchor || null,
     });
     toast(`Imported ${res.imported} · skipped ${res.skipped_duplicates} duplicates${
-      res.imported_despite_duplicate ? ` · ${res.imported_despite_duplicate} forced` : ""}`, "info", 6000);
+      res.anchored ? " · balance anchored" : ""}`, "info", 6000);
     closeModal(); renderFinance();
   });
 }

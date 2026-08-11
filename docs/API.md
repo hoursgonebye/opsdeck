@@ -502,7 +502,59 @@ second purchase. Imports mark duplicates in the preview and skip them at
 commit unless forced. Identity is `sha256(account|date|cents|merchant_normalized)`
 — forced twins get a `|n` suffix.
 
-**Recognized CSV formats:** Capital One and Discover (auto-detected by
-header signature; card-number-ish columns are dropped at parse time and
-never stored). Anything else gets a manual column-mapping fallback. Adding
-an institution is one parser + one registry entry in `finance.py`.
+**Recognized CSV formats:** Capital One card, Capital One 360 Checking, and
+Discover (auto-detected by header signature; card/account-number columns are
+dropped at parse time and never stored). Anything else gets a manual
+column-mapping fallback. Adding an institution is one parser + one registry
+entry in `finance.py`.
+
+**Balance anchors.** The only stored balance fact is an anchor — a
+known-true balance on a date. The displayed balance is derived:
+anchor + ledger after it (for credit accounts, amount *owed* =
+anchor + debits − credits). A 360 Checking import anchors automatically
+from its Balance column; `PATCH /accounts/{id}` with `{"balance": "123.45"}`
+anchors manually. Unanchored accounts derive from an assumed $0 start and
+say so in `basis`.
+
+### Finance: rules, budgets, summary
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET`/`POST` | `/api/finance/rules` | `match_type` (`contains`/`starts_with`/`exact`/`regex`), `pattern` (vs `merchant_normalized`), `category_id`, `priority` (lower first), optional `account_id` |
+| `PATCH`/`DELETE` | `/api/finance/rules/{id}` | |
+| `POST` | `/api/finance/rules/apply?dry_run=true` | Runs over **uncategorized only** — overwriting a manual decision is structurally impossible |
+| `GET` | `/api/finance/budgets?period_start=` | One envelope per category per month |
+| `POST` | `/api/finance/budgets` | `{category_id, period_start, limit, rollover}` — upserts |
+| `PATCH`/`DELETE` | `/api/finance/budgets/{id}` | |
+| `POST` | `/api/finance/budgets/copy-from` | `{source_period, target_period}`, skips existing |
+| `GET` | `/api/finance/summary?period=YYYY-MM` | **The single source of computed truth**: income received, per-category spend vs effective limit (rollover carry included), to-be-budgeted, uncategorized count, derived balances, net position |
+| `GET` | `/api/finance/recurring` | Deterministic: 3+ similar-amount charges at a regular interval. No AI involved |
+
+Rules fire on manual entry (when no category is picked) and on import
+commit; first match wins by priority; a match sets `category_source: rule`
+and bumps the rule's `hit_count`. Regex patterns are validated — nested
+quantifiers and >200 chars are rejected up front, since user input feeding
+a regex engine is an injection surface.
+
+Rollover envelopes carry `(limit − spent)` from prior rollover months —
+including negative carry: overspending genuinely eats next month.
+
+### Finance: AI
+
+Strictly additive — every endpoint degrades to a plain error if the API
+key is missing or the API is unreachable; Phases 1–2 never depend on it.
+All endpoints are rate-limited (8/min each) so a UI bug cannot loop paid
+calls. The model is only ever handed server-computed figures.
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/api/finance/ai/categorize` | Runs rules first; sends only the leftovers (≤40). Returns suggestions, **writes nothing to transactions**. Proposes matching rules as `origin: ai_suggested`, `is_active: 0` |
+| `POST` | `/api/finance/ai/categorize/accept` | `{accepted: [{transaction_id, category_id}]}` — applies with `category_source: ai`, and only to rows *still* uncategorized |
+| `GET` | `/api/finance/ai/reviews?period=` | Stored narrative reviews |
+| `POST` | `/api/finance/ai/reviews/generate` | `{period_start}` — prose over precomputed summary + deltas + recurring; stored for re-reading |
+| `POST` | `/api/finance/ai/ask` | `{question}` — answers over supplied figures only |
+
+Malformed model output gets one strict retry, then fails closed —
+transactions stay uncategorized, which is a safe state. The design goal is
+the flywheel: every categorization pass grows the rule table, so AI usage
+shrinks as the system runs.

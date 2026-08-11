@@ -15,6 +15,7 @@ from db import init_db, connect
 from api import api, API_TOKEN
 from social import social
 from finance import finance
+import finance_ai  # noqa: F401  - registers /api/finance/ai/* on the blueprint
 from recurrence import TZ_NAME
 from calendars import start_auto_sync, AUTO_SYNC_MINUTES
 

@@ -236,6 +236,15 @@ integer cents; floats never touch an amount.
 | `fin_categories` | `name` (unique per profile), `parent_id` (one level), `is_income`, `is_transfer`, `color`, `sort_order`, **`profile_id`** |
 | `fin_transactions` | `account_id`, `posted_date`, `amount_cents`, `direction` (`debit`/`credit`), `merchant_raw` (write-once), `merchant_normalized`, `category_id` (NULL = uncategorized), `category_source` (`manual`/`rule`/`ai`/`import`), `is_pending`, `source` (`manual`/`csv`), `dedupe_key` UNIQUE |
 | `fin_income_sources` | `name`, `expected_amount_cents` (nullable — hours vary), `cadence`, `account_id`, `is_active`, **`profile_id`** |
+| `fin_category_rules` (v10) | `match_type`, `pattern`, `category_id`, `account_id` (NULL = all), `priority`, `is_active`, `origin` (`user`/`ai_suggested`), `hit_count`, `last_matched_at`, **`profile_id`** |
+| `fin_budgets` (v10) | `category_id`, `period_start` (YYYY-MM-01), `period_type`, `limit_cents`, `rollover`; UNIQUE `(category_id, period_start)` — scope via category |
+| `fin_ai_reviews` (v10) | `kind`, `period_start`, `period_end`, `body`, **`profile_id`** — stored so re-reading a review is a SELECT, not an API call |
+
+v10 also adds `balance_anchor_cents`/`balance_anchor_date` to
+`fin_accounts`: a known-true balance on a date, from which the current
+balance is *derived* by summing the ledger after it. Still not a running
+counter — the anchor never moves except by a newer import or an explicit
+re-anchor.
 
 Transactions inherit profile scope through their account (the cards→boards
 rule). `is_transfer` marks the seeded Transfers category: moving money
@@ -291,6 +300,7 @@ design, since it runs on every container start.
 | 7 | **Health.** Added `health_metrics` (profile-scoped, upsert on `(profile, metric, date, source)`) and `oauth_tokens`. Backfilled `health` into every existing profile's `enabled_modules`, since those rows predate the module |
 | 6 | **Per-profile growth.** Added `profile_id` to `skill_nodes`, `attributes`, `levelup_attempts`, `ai_proposals`, `thm_completions`. Each profile now has its own tree, its own stat set, and its own verification queue. Seeded the partner a 20-node non-technical starter tree with six attributes of her own, plus a board and routines |
 | 9 | **Finance.** Added `fin_accounts`, `fin_categories`, `fin_transactions`, `fin_income_sources` (all new — nothing to backfill) and seeded 15 categories per profile. Appended `finance` to every profile's `enabled_modules`, the v7 pattern |
+| 10 | **Finance rules, budgets, AI.** Added `fin_category_rules`, `fin_budgets`, `fin_ai_reviews`, and balance-anchor columns on `fin_accounts` |
 
 The v5 migration is additive only. Every pre-existing row backfills to
 `primary`, so nothing moves or disappears — verified on the live database:

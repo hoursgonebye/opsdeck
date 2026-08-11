@@ -1448,3 +1448,40 @@ a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-vis
   .fin-quick-grid #fq-merchant { grid-column: 2; }
   .fin-quick-grid #fq-log { grid-column: 1 / -1; }
 }
+
+/* Phase 2/3: balances, envelopes, AI */
+.fin-tiles {
+  display: grid; gap: 10px; margin-bottom: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+.fin-tile {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px;
+}
+.fin-tile .h-value { font-size: 18px; font-weight: 700; }
+.fin-tile.fin-net { border-color: var(--amber); }
+.fin-neg { color: var(--red); }
+.fin-tbb {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 8px 0 14px;
+}
+.fin-tbb .h-value { font-size: 22px; font-weight: 700; }
+.fin-env { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.fin-env:last-of-type { border-bottom: none; }
+.fin-env-head { display: flex; align-items: center; gap: 8px; }
+.fin-env-name { flex: 1; font-weight: 600; font-size: 13.5px; }
+.fin-env-bar { margin: 5px 0 3px; }
+.fin-env-bar.over span { background: var(--red); }
+.fin-two-col {
+  display: grid; gap: 14px; margin-top: 14px;
+  grid-template-columns: 1fr 1fr;
+}
+@media (max-width: 900px) { .fin-two-col { grid-template-columns: 1fr; } }
+.fin-review-body { font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+.fin-ask { margin-top: 10px; }
+.fin-ask input { flex: 1; }
+.fin-sugg {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 0; border-bottom: 1px solid var(--border); cursor: pointer;
+}
+.fin-rule-off { opacity: 0.55; }
