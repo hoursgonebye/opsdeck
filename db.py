@@ -19,7 +19,7 @@ DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = DATA_DIR / "opsdeck.db"
 UPLOAD_DIR = DATA_DIR / "uploads"
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Tables that gain a profile_id in v5. Pre-v5 rows all belong to 'primary'.
 PROFILE_SCOPED_TABLES = ("boards", "events", "routines", "docs", "quick_notes")
@@ -554,6 +554,54 @@ CREATE INDEX IF NOT EXISTS idx_fin_tx_date ON fin_transactions(posted_date);
 CREATE INDEX IF NOT EXISTS idx_fin_tx_account ON fin_transactions(account_id, posted_date);
 CREATE INDEX IF NOT EXISTS idx_fin_tx_category ON fin_transactions(category_id, posted_date);
 
+-- Category rules (schema v10): deterministic first-match-wins
+-- categorization evaluated by priority on entry and import. A rule NEVER
+-- overwrites category_source='manual' - user decisions are final. Rules
+-- the AI proposes arrive with origin='ai_suggested' and is_active=0; they
+-- do nothing until a person switches them on.
+CREATE TABLE IF NOT EXISTS fin_category_rules (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id      TEXT NOT NULL,
+  match_type      TEXT NOT NULL DEFAULT 'contains',  -- contains|starts_with|exact|regex
+  pattern         TEXT NOT NULL,                     -- matched against merchant_normalized
+  category_id     INTEGER NOT NULL REFERENCES fin_categories(id),
+  account_id      INTEGER REFERENCES fin_accounts(id),  -- NULL = all accounts
+  priority        INTEGER NOT NULL DEFAULT 100,      -- lower evaluates first
+  is_active       INTEGER NOT NULL DEFAULT 1,
+  origin          TEXT NOT NULL DEFAULT 'user',      -- user|ai_suggested
+  hit_count       INTEGER NOT NULL DEFAULT 0,
+  last_matched_at TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_fin_rules_profile ON fin_category_rules(profile_id, is_active, priority);
+
+-- Envelope budgets (schema v10), one row per category per month. Scope
+-- inherits through the category. period_type only ever holds 'monthly'
+-- today; the column exists so a different period length is a value, not a
+-- migration.
+CREATE TABLE IF NOT EXISTS fin_budgets (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_id  INTEGER NOT NULL REFERENCES fin_categories(id),
+  period_start TEXT NOT NULL,                        -- YYYY-MM-01
+  period_type  TEXT NOT NULL DEFAULT 'monthly',
+  limit_cents  INTEGER NOT NULL,
+  rollover     INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (category_id, period_start)
+);
+
+-- Stored AI narrative reviews (schema v10), so re-reading one is a SELECT,
+-- not another API call.
+CREATE TABLE IF NOT EXISTS fin_ai_reviews (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id   TEXT NOT NULL,
+  kind         TEXT NOT NULL DEFAULT 'monthly',      -- weekly|monthly|custom
+  period_start TEXT NOT NULL,
+  period_end   TEXT NOT NULL,
+  body         TEXT NOT NULL,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_fin_reviews_profile ON fin_ai_reviews(profile_id, period_start);
+
 -- Expectation only. Actual income is a fin_transactions row with
 -- direction='credit' and an income category; nothing ever treats an
 -- expected amount as received.
@@ -802,6 +850,16 @@ def _migrate(conn):
                     "UPDATE profile_settings SET settings=? WHERE profile_id=?",
                     (json.dumps(cfg), row["profile_id"]),
                 )
+
+    if current < 10:
+        # v10: rules, budgets and reviews are new tables (SCHEMA creates
+        # them). fin_accounts gains a balance anchor: a known-true balance
+        # on a date, from which the current balance is *derived* by summing
+        # the ledger after it - the closest thing to a stored balance this
+        # app will ever have, and it is still not a running counter.
+        if "balance_anchor_cents" not in _columns(conn, "fin_accounts"):
+            conn.execute("ALTER TABLE fin_accounts ADD COLUMN balance_anchor_cents INTEGER")
+            conn.execute("ALTER TABLE fin_accounts ADD COLUMN balance_anchor_date TEXT")
 
     if current < 9:
         # v9: the finance ledger. Tables are created by SCHEMA above and
