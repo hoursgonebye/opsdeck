@@ -11,10 +11,11 @@ from pathlib import Path
 
 from flask import Flask, render_template, send_from_directory
 
-from db import init_db
+from db import init_db, connect
 from api import api, API_TOKEN
 from social import social
 from recurrence import TZ_NAME
+from calendars import start_auto_sync, AUTO_SYNC_MINUTES
 
 app = Flask(__name__)
 app.register_blueprint(api)
@@ -72,4 +73,14 @@ if __name__ == "__main__":
         print("=" * 62 + "\n")
 
     print(f"  Timezone: {TZ_NAME}")
+
+    # Started here rather than at import so that importing app.py for a test
+    # never starts fetching calendars. app.run() has no reloader in this
+    # configuration, so there is no risk of two sweepers.
+    if AUTO_SYNC_MINUTES > 0:
+        print(f"  Calendar feeds: auto-sync every {AUTO_SYNC_MINUTES} min")
+    else:
+        print("  Calendar feeds: auto-sync off, manual only")
+    start_auto_sync(connect)
+
     app.run(host="0.0.0.0", port=5000)

@@ -131,11 +131,26 @@ to know feeds exist.
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/calendar/feeds` | Subscriptions with `event_count` and last sync. **Never returns the URL** — only `url_host` |
+| `GET` | `/api/calendar/feeds` | Subscriptions with `event_count`, `last_synced_at`, `next_sync_at` and `auto_sync_minutes`. **Never returns the URL** — only `url_host` |
 | `POST` | `/api/calendar/feeds` | `{name, url, color}`. Syncs immediately; a feed that can't be read is rejected `400` and not saved |
 | `POST` | `/api/calendar/feeds/{id}/sync` | Re-sync one |
 | `POST` | `/api/calendar/feeds/sync-all` | Re-sync every enabled feed |
 | `PATCH`/`DELETE` | `/api/calendar/feeds/{id}` | `name`, `color`, `enabled`. Deleting removes its imported events too |
+
+**Feeds refresh themselves.** A background sweeper in the app re-syncs any
+enabled feed once it is `OPSDECK_FEED_SYNC_MINUTES` old (default 60), across
+*every* profile — `sync-all` is scoped to the active profile, so it is not
+what runs on the timer. The endpoints above stay as the manual override, and
+each row reports `next_sync_at` so the UI can say when the next one is due.
+Set the variable to `0` to switch the sweeper off.
+
+`last_synced_at` and `next_sync_at` are **UTC** (SQLite's `datetime('now')`),
+unlike the local wall-clock times used elsewhere in the API. Convert before
+displaying.
+
+A sync that fails still stamps `last_synced_at`, with the reason in
+`last_status`. That is deliberate: it backs a dead feed off to one attempt
+per interval instead of one per tick.
 
 **Feed URLs are bearer credentials.** Anyone holding one can read the
 calendar, so the URL is stored server-side and never sent back to the

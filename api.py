@@ -324,6 +324,27 @@ def dismiss_quick_note(nid):
 # table tagged with feed_id, so Today, the month grid and the merged Us view
 # pick them up without knowing feeds exist.
 
+def _next_sync_at(feed):
+    """
+    When the background sweeper will next pick this feed up.
+
+    Returned in UTC to match last_synced_at, which SQLite writes with
+    datetime('now'); the browser converts. None means "not on a schedule" -
+    auto-sync is off, or the feed is disabled, or it has never synced and
+    the next tick will take it regardless.
+    """
+    if calendars.AUTO_SYNC_MINUTES <= 0 or not feed.get("enabled"):
+        return None
+    if not feed.get("last_synced_at"):
+        return None
+    try:
+        base = datetime.strptime(feed["last_synced_at"][:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+    return (base + timedelta(minutes=calendars.AUTO_SYNC_MINUTES)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+
+
 @api.route("/calendar/feeds", methods=["GET"])
 @require_token
 def list_feeds():
@@ -337,6 +358,8 @@ def list_feeds():
     # the roster, and it has no business sitting in the DOM.
     for r in rows:
         r["url_host"] = urllib.parse.urlparse(r.pop("url", "")).netloc
+        r["auto_sync_minutes"] = calendars.AUTO_SYNC_MINUTES
+        r["next_sync_at"] = _next_sync_at(r)
     return jsonify(rows)
 
 

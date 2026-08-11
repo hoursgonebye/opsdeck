@@ -21,9 +21,15 @@ Two things about real-world feeds shape this module:
 
 Feed events are read-only in the UI: editing one would be silently undone
 by the next sync, which is worse than not offering it.
+
+Syncing runs on a timer (see start_auto_sync at the bottom) as well as on
+demand, because a roster that only refreshes when you remember to press a
+button is a roster you cannot trust.
 """
 import hashlib
+import os
 import re
+import threading
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -33,6 +39,14 @@ from recurrence import TZ, fmt_dt
 USER_AGENT = "OpsDeck/1.0 (+self-hosted calendar subscriber)"
 MAX_BYTES = 5 * 1024 * 1024      # a roster feed is kilobytes; refuse a firehose
 FETCH_TIMEOUT = 45
+
+# How stale a feed may get before the sweeper refetches it. 0 disables the
+# sweeper entirely and leaves feeds manual-only.
+AUTO_SYNC_MINUTES = int(os.environ.get("OPSDECK_FEED_SYNC_MINUTES", "60"))
+
+_TICK_SECONDS = 60          # how often the sweeper looks for due feeds
+_FIRST_TICK_SECONDS = 15    # let the app finish booting before any network I/O
+_stop = threading.Event()
 
 
 def fetch(url):
@@ -250,3 +264,104 @@ def sync_feed(conn, feed):
     )
     return {"ok": True, "imported": imported, "removed": removed,
             "window": [fmt_dt(win_start)[:10], fmt_dt(win_end)[:10]]}
+
+
+# ------------------------------------------------------------ auto-sync
+#
+# The mailbox gets away with delivering lazily on read (ARCHITECTURE 8)
+# because delivery is a local UPDATE. Syncing a feed is an HTTP fetch with a
+# 45-second timeout, so the same trick in the path of GET /api/events would
+# mean an unreachable roster host hanging the calendar. Hence a timer.
+
+
+def due_feeds(conn, minutes=None):
+    """
+    Enabled feeds whose last sync is older than the interval.
+
+    The staleness comparison is left to SQLite rather than done in Python:
+    last_synced_at is written with datetime('now') and is therefore UTC,
+    while the rest of the app works in local wall-clock time. Comparing a
+    stored value against the same clock that wrote it keeps those two
+    conventions from ever meeting.
+    """
+    minutes = AUTO_SYNC_MINUTES if minutes is None else minutes
+    rows = conn.execute(
+        "SELECT * FROM calendar_feeds WHERE enabled=1 "
+        "AND (last_synced_at IS NULL OR last_synced_at <= datetime('now', ?)) "
+        "ORDER BY id",
+        (f"-{int(minutes)} minutes",),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def sync_due(connect, minutes=None):
+    """
+    Sync every feed that is due, across all profiles.
+
+    Deliberately not "call sync-all in a loop": that endpoint is scoped to
+    the active profile, and the partner's timetable should refresh without
+    anyone having to be looking at her tab.
+
+    A connection per feed rather than one for the whole sweep, so a slow
+    feed does not sit on an open handle while the rest of the app writes.
+    """
+    conn = connect()
+    try:
+        feeds = due_feeds(conn, minutes)
+    finally:
+        conn.close()
+
+    results = []
+    for feed in feeds:
+        conn = connect()
+        try:
+            result = sync_feed(conn, feed)
+            if not result.get("ok"):
+                # Stamp the attempt even though it failed. Without this a
+                # feed whose host is down would be retried every tick
+                # instead of once per interval.
+                conn.execute(
+                    "UPDATE calendar_feeds SET last_status=?, "
+                    "last_synced_at=datetime('now') WHERE id=?",
+                    (result.get("error", "failed")[:200], feed["id"]),
+                )
+            conn.commit()
+        except Exception as e:            # a bad feed must not stop the rest
+            result = {"ok": False, "error": f"sync crashed: {e}"}
+        finally:
+            conn.close()
+        results.append({"id": feed["id"], "name": feed["name"], **result})
+    return results
+
+
+def start_auto_sync(connect):
+    """
+    Start the background sweeper. Returns the thread, or None if disabled.
+
+    Daemon, so it dies with the process and needs no shutdown handling. It
+    is started from app.py's __main__ block rather than at import, so that
+    importing the app for a test never fires network requests.
+    """
+    if AUTO_SYNC_MINUTES <= 0:
+        return None
+
+    def loop():
+        delay = _FIRST_TICK_SECONDS
+        while not _stop.wait(delay):
+            delay = _TICK_SECONDS
+            try:
+                for r in sync_due(connect):
+                    if not r.get("ok"):
+                        print(f"  [feeds] {r['name']}: {r.get('error')}", flush=True)
+            except Exception as e:
+                # One bad tick must never kill the sweeper for good.
+                print(f"  [feeds] sweep failed: {e}", flush=True)
+
+    thread = threading.Thread(target=loop, name="feed-autosync", daemon=True)
+    thread.start()
+    return thread
+
+
+def stop_auto_sync():
+    """Ask the sweeper to exit. Only used by tests; the daemon handles prod."""
+    _stop.set()

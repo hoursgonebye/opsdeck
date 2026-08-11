@@ -56,6 +56,40 @@ There is no message queue, no cache layer, no worker process. For one
 household writing a few hundred rows a day, an in-process SQLite query is
 faster than the network hop to anything else would be.
 
+### The one background thread
+
+The app runs exactly one thing on a timer: a daemon thread that refetches
+subscribed calendar feeds once they are `OPSDECK_FEED_SYNC_MINUTES` stale
+(`start_auto_sync` in `calendars.py`).
+
+It is worth being explicit about why this one deviates, because the
+pattern everywhere else is to do periodic work lazily on read — the mailbox
+delivers due messages inside `GET /joint/mailbox` rather than on a schedule
+([§8](#8-the-joint-layer)), precisely so there is no scheduler to be down.
+
+The difference is what the work costs. Delivering mail is a local `UPDATE`
+measured in microseconds, so hanging it off a read is free. Syncing a feed
+is an HTTP fetch with a 45-second timeout against someone else's server, and
+putting that in the path of `GET /api/events` would mean an unreachable
+roster host freezing the calendar. Network I/O does not belong in a request
+handler that has no reason to make a network call.
+
+Three details make the thread cheap to reason about:
+
+- **Staleness, not a schedule.** Each tick asks which feeds are overdue
+  rather than syncing everything on a fixed cadence, so a manual sync resets
+  the clock and a restart doesn't trigger a thundering herd.
+- **A failed sync still stamps `last_synced_at`.** Otherwise a feed whose
+  host is down would be retried every tick forever; stamping backs it off to
+  one attempt per interval.
+- **It sweeps all profiles.** `POST /calendar/feeds/sync-all` is scoped to
+  the active profile — fine for a button, wrong for a timer, since the
+  partner's timetable should refresh without anyone looking at her tab.
+
+Started from `app.py`'s `__main__` block rather than at import, so importing
+the app for a test never starts fetching calendars, and daemonised so it
+dies with the process and needs no shutdown handling.
+
 ### Why no frontend framework
 
 The UI is ~3,500 lines of plain JS across 14 files, one per section, each

@@ -35,7 +35,7 @@ around 25 MB of RAM.
 |---|---|
 | **Today** | Landing page: overdue cards, today's schedule, routines with checkboxes, everything due today. Includes **quick capture** — write a note, it gets filed automatically. |
 | **Boards** | Multiple kanban boards, drag-and-drop cards, descriptions, due dates, colour labels, checklists, file attachments. |
-| **Calendar** | Month grid with full RFC 5545 recurrence (`every other Tuesday`, `second Monday of the month`). Card due dates appear alongside events. Multi-day events render as continuous bars. Individual occurrences can be skipped or moved without touching the series. |
+| **Calendar** | Month grid with full RFC 5545 recurrence (`every other Tuesday`, `second Monday of the month`). Card due dates appear alongside events. Multi-day events render as continuous bars. Individual occurrences can be skipped or moved without touching the series. Subscribed `.ics` feeds (a work roster, a timetable) refresh themselves hourly. |
 | **Routines** | Daily checklist grouped morning/afternoon/evening, per-routine streaks, 30-day history. Completions are stored per date, so a new day starts empty and history stays queryable. |
 | **Docs** | Upload or author `.md`/`.html`/`.txt`, organised by folder and tags. HTML renders in a sandboxed iframe (scripts run, but in an opaque origin — see [ARCHITECTURE.md](docs/ARCHITECTURE.md#the-docs-iframe-sandbox)). |
 | **Skill tree** | A pan/zoom map of ~450 skills across 12 domains — six security (networking, linux, pentest, defense, crypto, grc) and six programming (python, javascript, c, cpp, html, css). Nodes have levels 0–5 and feed weighted attributes. |
@@ -149,6 +149,7 @@ All configuration is environment variables, read at startup.
 | `OPSDECK_TZ` | `America/New_York` | Timezone anchoring "today" and all local dates. |
 | `OPSDECK_MAX_UPLOAD_MB` | `25` | Per-file upload ceiling. |
 | `OPSDECK_NOTES_MIN_CHARS` | `300` | The notes gate: minimum writeup length before a level-up attempt can open. |
+| `OPSDECK_FEED_SYNC_MINUTES` | `60` | How stale a subscribed `.ics` feed may get before it refetches itself. `0` turns the sweeper off and leaves feeds manual-only. |
 | `ANTHROPIC_API_KEY` | *(empty)* | Optional. Set it and the mentor grades in-app via the API. Leave empty to use queue mode or the subscription-backed sidecar. |
 | `OPSDECK_MENTOR_MODEL` | `claude-sonnet-4-6` | Model used in direct mode. |
 | `OPSDECK_BRIDGE_URL` | `http://terminal:7682` | Where the mentor chat sidecar lives. |

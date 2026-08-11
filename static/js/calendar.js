@@ -331,8 +331,22 @@ function parseRRule(str) {
 // A read-only .ics subscription: a work roster, a class timetable. Its
 // events land in the normal events table, so they appear on Today, the
 // month grid and the merged Us view without those knowing feeds exist.
+
+// last_synced_at and next_sync_at come from SQLite's datetime('now'), which
+// is UTC, while every other timestamp in the UI is local wall-clock. Tag it
+// as UTC so the browser converts, rather than showing a sync from four hours
+// ago as though it had just happened.
+function feedTime(s) {
+  if (!s) return "";
+  const d = new Date(s.replace(" ", "T") + "Z");
+  return isNaN(d) ? s.slice(0, 16)
+    : d.toLocaleString([], { month: "short", day: "numeric",
+                             hour: "numeric", minute: "2-digit" });
+}
+
 async function openFeedsModal() {
   const feeds = await API.get("/calendar/feeds");
+  const autoMin = feeds.length ? feeds[0].auto_sync_minutes : 0;
 
   openModal(`
     <div class="modal-head">
@@ -347,7 +361,8 @@ async function openFeedsModal() {
           <span class="feed-main">
             <span class="feed-name">${esc(f.name)}</span>
             <span class="card-meta">${esc(f.url_host)} · ${f.event_count} events${
-              f.last_synced_at ? ` · synced ${esc(f.last_synced_at.slice(0, 16))}` : ""}</span>
+              f.last_synced_at ? ` · synced ${esc(feedTime(f.last_synced_at))}` : ""}${
+              f.next_sync_at ? ` · next ${esc(feedTime(f.next_sync_at))}` : ""}</span>
             ${f.last_status && f.last_status !== "ok"
               ? `<span class="feed-err">${esc(f.last_status)}</span>` : ""}
           </span>
@@ -370,6 +385,9 @@ async function openFeedsModal() {
     <p class="notes-gate-hint">
       Read-only. Events refresh on each sync, so edits belong at the source.
       The URL is stored server-side and never sent back to the browser.
+      ${!feeds.length ? "" : autoMin > 0
+        ? `Feeds re-sync on their own every ${autoMin} minutes; “Sync all” just forces it now.`
+        : `Auto-sync is off (OPSDECK_FEED_SYNC_MINUTES=0), so these only refresh when you sync them.`}
     </p>
 
     <div class="modal-actions">

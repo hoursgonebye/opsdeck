@@ -16,6 +16,9 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPSDECK_MENTOR_MODEL=${OPSDECK_MENTOR_MODEL:-claude-sonnet-4-6}
       - OPSDECK_NOTES_MIN_CHARS=${OPSDECK_NOTES_MIN_CHARS:-300}
+      # How stale a subscribed .ics feed may get before it refetches
+      # itself. 0 leaves feeds manual-only.
+      - OPSDECK_FEED_SYNC_MINUTES=${OPSDECK_FEED_SYNC_MINUTES:-60}
       # Optional: connects Fitbit / Pixel Watch data via the Google Health
       # API. Left empty the Health tab still works with manual and pushed
       # readings - see .env.example for the Cloud Console setup.
