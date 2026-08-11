@@ -1,7 +1,8 @@
 # API reference
 
-134 endpoints. Everything the browser UI does goes through these — there is
-no private API. If you can do it by clicking, you can do it from a script.
+Everything the browser UI does goes through these endpoints (~170 of them)
+— there is no private API. If you can do it by clicking, you can do it from
+a script.
 
 ---
 

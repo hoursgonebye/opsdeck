@@ -319,6 +319,62 @@ def dismiss_quick_note(nid):
     return jsonify({"dismissed": nid})
 
 
+# --------------------------------------------------------------- web push
+# Real notifications on phones with the tab closed. The browser subscribes
+# via its push service using our VAPID public key; the server stores the
+# subscription per profile and social.notify() fans out to it.
+
+@api.route("/push/vapid-key", methods=["GET"])
+@require_token
+def push_vapid_key():
+    import push
+    try:
+        return jsonify({"key": push.public_key()})
+    except Exception as e:
+        return jsonify({"error": f"push not available: {e}"}), 503
+
+
+@api.route("/push/subscribe", methods=["POST"])
+@require_token
+def push_subscribe():
+    import push
+    sub = body().get("subscription") or {}
+    conn = connect()
+    ok = push.save_subscription(conn, active_profile(), sub)
+    conn.commit()
+    n = conn.execute("SELECT COUNT(*) FROM push_subscriptions WHERE profile_id=?",
+                     (active_profile(),)).fetchone()[0]
+    conn.close()
+    if not ok:
+        return jsonify({"error": "subscription needs endpoint and keys"}), 400
+    return jsonify({"subscribed": True, "devices": n}), 201
+
+
+@api.route("/push/unsubscribe", methods=["POST"])
+@require_token
+def push_unsubscribe():
+    import push
+    endpoint = (body().get("endpoint") or "").strip()
+    if not endpoint:
+        return jsonify({"error": "endpoint required"}), 400
+    conn = connect()
+    n = push.drop_subscription(conn, endpoint)
+    conn.commit()
+    conn.close()
+    return jsonify({"removed": n})
+
+
+@api.route("/push/test", methods=["POST"])
+@require_token
+def push_test():
+    """Prove the whole pipe works, end to end, on demand."""
+    import push
+    sent = push.send_to_profile(active_profile(), "Ops Deck",
+                                "Push notifications are working on this device.",
+                                tag="push-test")
+    return jsonify({"sent_to_devices": sent})
+
+
 # ------------------------------------------------------- mentor briefing
 # A deterministic per-profile daily digest the chat mentor reads before
 # answering, so "what's my situation" costs zero model calls to establish.

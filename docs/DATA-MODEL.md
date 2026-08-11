@@ -296,11 +296,12 @@ design, since it runs on every container start.
 | 3 | TryHackMe tables; `levelup_attempts.room_code` |
 | 4 | `quick_notes` |
 | 5 | **Profiles.** Added `profile_id` to boards/events/routines/docs/quick_notes with `DEFAULT 'primary'` and an index each; created profiles, settings, themes, notifications, and all 11 joint tables; seeded 3 profiles, 10 themes, 6 milestones, and the singletons |
-| 8 | **Calendar feeds.** Added `calendar_feeds`, plus `feed_id` and `external_uid` on `events`. `feed_id` NULL means the user created it; non-NULL means it came from a subscription and is replaced on each sync |
-| 7 | **Health.** Added `health_metrics` (profile-scoped, upsert on `(profile, metric, date, source)`) and `oauth_tokens`. Backfilled `health` into every existing profile's `enabled_modules`, since those rows predate the module |
 | 6 | **Per-profile growth.** Added `profile_id` to `skill_nodes`, `attributes`, `levelup_attempts`, `ai_proposals`, `thm_completions`. Each profile now has its own tree, its own stat set, and its own verification queue. Seeded the partner a 20-node non-technical starter tree with six attributes of her own, plus a board and routines |
+| 7 | **Health.** Added `health_metrics` (profile-scoped, upsert on `(profile, metric, date, source)`) and `oauth_tokens`. Backfilled `health` into every existing profile's `enabled_modules`, since those rows predate the module |
+| 8 | **Calendar feeds.** Added `calendar_feeds`, plus `feed_id` and `external_uid` on `events`. `feed_id` NULL means the user created it; non-NULL means it came from a subscription and is replaced on each sync |
 | 9 | **Finance.** Added `fin_accounts`, `fin_categories`, `fin_transactions`, `fin_income_sources` (all new — nothing to backfill) and seeded 15 categories per profile. Appended `finance` to every profile's `enabled_modules`, the v7 pattern |
 | 10 | **Finance rules, budgets, AI.** Added `fin_category_rules`, `fin_budgets`, `fin_ai_reviews`, and balance-anchor columns on `fin_accounts` |
+| 11 | **Web push.** Added `push_subscriptions` — one row per subscribed device per profile, pruned automatically when a push service reports the endpoint gone |
 
 The v5 migration is additive only. Every pre-existing row backfills to
 `primary`, so nothing moves or disappears — verified on the live database:

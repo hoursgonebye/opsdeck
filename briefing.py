@@ -10,6 +10,7 @@ the calendar-feed sweeper), and on demand via POST /api/mentor/briefing.
 Whether today's briefing exists is answered from the docs table, not
 memory - the same lesson the chat bridge learned about container restarts.
 """
+import os
 import threading
 from datetime import datetime, timedelta
 
@@ -19,6 +20,10 @@ from recurrence import now_local, today_local, fmt_dt, expand_event
 import finance as fin
 
 BRIEFING_FOLDER = "Briefings"
+
+# The cashflow guard: liquid balance minus recurring charges due in the
+# next two weeks under this floor -> a pushed warning. 0 disables.
+LOW_BALANCE_CENTS = int(os.environ.get("OPSDECK_LOW_BALANCE_CENTS", "2500"))
 
 _TICK_SECONDS = 60
 _stop = threading.Event()
@@ -114,6 +119,10 @@ def compose(conn, pid, date=None):
                          + ", ".join(f"{r['merchant']} ~{_money(r['amount_cents'])} "
                                      f"({r['next_expected']})" for r in due))
 
+        squeeze = cashflow_check(conn, pid)
+        if squeeze:
+            lines.append(f"- ⚠ CASHFLOW: {squeeze['message']}")
+
     # ---- the next seven days ----
     week = _events_between(conn, pid, day, day + timedelta(days=8))
     if week:
@@ -170,6 +179,60 @@ def compose(conn, pid, date=None):
     lines += ["", f"*Generated {fmt_dt(now_local())} — deterministic digest, "
               f"no model involved.*"]
     return "\n".join(lines)
+
+
+def cashflow_check(conn, pid):
+    """
+    The deterministic money guard: liquid balance (checking + cash) minus
+    recurring charges due in the next 14 days. Below the floor, returns a
+    dict with a plain-language message; otherwise None. Pure arithmetic
+    over server data - no model anywhere near it.
+    """
+    if LOW_BALANCE_CENTS <= 0:
+        return None
+    accounts = [dict(r) for r in conn.execute(
+        "SELECT * FROM fin_accounts WHERE profile_id=? AND is_active=1 "
+        "AND type IN ('checking','cash')", (pid,))]
+    if not accounts:
+        return None
+    liquid = sum(fin.derived_balance(conn, a)[0] for a in accounts)
+
+    horizon = (datetime.strptime(str(today_local()), "%Y-%m-%d")
+               + timedelta(days=14)).strftime("%Y-%m-%d")
+    due = [r for r in fin.compute_recurring(conn, pid)
+           if r["next_expected"] <= horizon]
+    committed = sum(r["amount_cents"] for r in due)
+    projected = liquid - committed
+    if projected >= LOW_BALANCE_CENTS:
+        return None
+
+    charges = ", ".join(f"{r['merchant']} {_money(r['amount_cents'])} "
+                        f"on {r['next_expected']}" for r in due) or "none detected"
+    return {
+        "liquid_cents": liquid,
+        "committed_cents": committed,
+        "projected_cents": projected,
+        "message": (f"{_money(liquid)} liquid minus {_money(committed)} in "
+                    f"recurring charges due within 14 days leaves "
+                    f"{_money(projected)} ({charges})"),
+    }
+
+
+def _notify_cashflow(conn, pid):
+    """Push the guard's warning, at most once per profile per day."""
+    squeeze = cashflow_check(conn, pid)
+    if not squeeze:
+        return False
+    already = conn.execute(
+        "SELECT 1 FROM notifications WHERE profile_id=? AND source_type='cashflow' "
+        "AND date(created_at)=date('now')", (pid,)).fetchone()
+    if already:
+        return False
+    from social import notify
+    notify(conn, pid, "cashflow", "Money is tight ahead",
+           squeeze["message"], link="#finance")
+    conn.commit()
+    return True
 
 
 def generate(conn, pid, date=None):
@@ -232,6 +295,9 @@ def start_scheduler(connect_fn, at="23:45"):
                             "SELECT id FROM profiles WHERE type!='joint'").fetchall():
                         if not _exists_today(conn, row["id"]):
                             generate(conn, row["id"])
+                            if _notify_cashflow(conn, row["id"]):
+                                print(f"  [briefing] cashflow warning for {row['id']}",
+                                      flush=True)
                             print(f"  [briefing] wrote {row['id']} {today_local()}",
                                   flush=True)
                 finally:

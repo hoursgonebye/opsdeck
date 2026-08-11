@@ -440,11 +440,14 @@ is 12 full ledger passes. Fine at current size; if the ledger reaches ~100k
 rows, add a weekly snapshot table and read from it for anything older than
 the current week. Nothing about the current design blocks that.
 
-**No true background push.** Browser notifications only fire while a tab is
-open — the page polls `/api/reminders/upcoming` once a minute. Real push
-needs Web Push with VAPID keys and stored subscriptions; `static/sw.js`
-already has the `push` listener wired for it. That's an addition, not a
-rewrite.
+**Background push (since v11).** Web Push with VAPID is implemented:
+`push.py` persists the keypair in `data/`, subscriptions live per-device
+per-profile in `push_subscriptions`, and `social.notify()` fans every
+in-app notification out to subscribed devices — tab open or not. On iOS
+(16.4+) this requires the app installed to the Home Screen, which the
+manifest and icons enable; the notifications button walks the user through
+it. The old poll-while-open path remains as the fallback for unsubscribed
+browsers.
 
 **TryHackMe sync is best-effort.** There is no official personal API, so
 `thm.py` scrapes unofficial endpoints behind the public profile and can

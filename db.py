@@ -19,7 +19,7 @@ DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = DATA_DIR / "opsdeck.db"
 UPLOAD_DIR = DATA_DIR / "uploads"
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Tables that gain a profile_id in v5. Pre-v5 rows all belong to 'primary'.
 PROFILE_SCOPED_TABLES = ("boards", "events", "routines", "docs", "quick_notes")
@@ -488,6 +488,21 @@ CREATE TABLE IF NOT EXISTS calendar_feeds (
 );
 CREATE INDEX IF NOT EXISTS idx_feeds_profile ON calendar_feeds(profile_id);
 
+-- ==================== web push (schema v11) ====================
+--
+-- One row per subscribed browser/device per profile. The endpoint URL is
+-- the identity (push services rotate them on re-subscribe); rows whose
+-- endpoint answers 404/410 are pruned automatically on send.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id TEXT NOT NULL,
+  endpoint   TEXT NOT NULL UNIQUE,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_push_profile ON push_subscriptions(profile_id);
+
 -- ==================== finance (schema v9) ====================
 --
 -- A personal ledger. Same discipline as the growth system: transactions are
@@ -850,6 +865,9 @@ def _migrate(conn):
                     "UPDATE profile_settings SET settings=? WHERE profile_id=?",
                     (json.dumps(cfg), row["profile_id"]),
                 )
+
+    # v11 adds push_subscriptions, created by SCHEMA above - nothing to
+    # backfill, the bump just records the version.
 
     if current < 10:
         # v10: rules, budgets and reviews are new tables (SCHEMA creates

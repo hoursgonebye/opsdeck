@@ -68,6 +68,14 @@ def service_worker():
     return send_from_directory("static", "sw.js", mimetype="application/javascript")
 
 
+@app.route("/manifest.json")
+def manifest():
+    # Served from the root so the PWA scope is "/" - a manifest under
+    # /static/ would scope the installed app to /static/ and break it.
+    return send_from_directory("static", "manifest.json",
+                               mimetype="application/manifest+json")
+
+
 if __name__ == "__main__":
     init_db()
 

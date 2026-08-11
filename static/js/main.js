@@ -143,13 +143,25 @@ async function setupNotifications() {
     return;
   }
 
+  // iOS only grants push to web apps installed on the Home Screen. If we're
+  // in Safari-in-browser on an iPhone/iPad, the honest button explains the
+  // one extra step instead of a permission prompt that can never succeed.
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const iosNotInstalled = isIOS && !window.navigator.standalone;
+
   const sync = () => {
     const p = Notification.permission;
     btn.classList.toggle("on", p === "granted");
     btn.disabled = p === "denied";
-    if (p === "granted") {
+    if (iosNotInstalled) {
+      btn.textContent = "Install for notifications";
+      btn.title = "On iPhone: Share → Add to Home Screen, then open Ops Deck " +
+        "from the new icon and tap this button again. iOS only allows push " +
+        "for installed web apps.";
+    } else if (p === "granted") {
       btn.textContent = "Notifications on";
-      btn.title = "Reminders will fire while this tab is open.";
+      btn.title = "Push is active for this device - works with the app closed.";
     } else if (p === "denied") {
       btn.textContent = "Notifications blocked";
       btn.title =
@@ -163,9 +175,19 @@ async function setupNotifications() {
   sync();
 
   btn.addEventListener("click", async () => {
+    if (iosNotInstalled) {
+      toast(btn.title, "info", 10000);
+      return;
+    }
     if (Notification.permission === "granted") {
-      // Already on - prove it works rather than looking inert.
-      new Notification("Ops Deck", { body: "Notifications are working." });
+      // Already on - re-register this device and prove the pipe end to end.
+      const ok = await ensurePushSubscription();
+      try {
+        const r = await API.post("/push/test", {});
+        toast(ok && r.sent_to_devices
+          ? `Test push sent to ${r.sent_to_devices} device${r.sent_to_devices > 1 ? "s" : ""}`
+          : "Notifications on for this tab; push delivery unavailable", "info", 6000);
+      } catch (e) { /* toasted */ }
       return;
     }
     let result;
@@ -176,17 +198,58 @@ async function setupNotifications() {
       return;
     }
     sync();
-    if (result === "granted") toast("Notifications enabled");
-    else if (result === "denied") toast("Notifications blocked in browser settings", "error", 6000);
-    else toast("Notification prompt dismissed", "info");
+    if (result === "granted") {
+      const ok = await ensurePushSubscription();
+      toast(ok ? "Push notifications enabled for this device"
+               : "Notifications enabled (tab-open only; push setup failed)", "info", 6000);
+    } else if (result === "denied") {
+      toast("Notifications blocked in browser settings", "error", 6000);
+    } else {
+      toast("Notification prompt dismissed", "info");
+    }
   });
 
   if ("serviceWorker" in navigator) {
     try { await navigator.serviceWorker.register("/sw.js"); } catch (e) { /* non-fatal */ }
   }
 
+  // Already granted (returning visit): quietly refresh this device's
+  // subscription - push endpoints rotate, and the server upserts.
+  if (Notification.permission === "granted" && !iosNotInstalled) {
+    ensurePushSubscription();
+  }
+
   setInterval(pollReminders, 60000);
   pollReminders();
+}
+
+// Subscribe this browser with the server's VAPID key and register the
+// subscription under the active profile. True on success.
+async function ensurePushSubscription() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      const { key } = await API.get("/push/vapid-key");
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(key),
+      });
+    }
+    await API.post("/push/subscribe", { subscription: sub.toJSON() });
+    return true;
+  } catch (e) {
+    console.warn("push subscribe failed", e);
+    return false;
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 }
 
 async function pollReminders() {

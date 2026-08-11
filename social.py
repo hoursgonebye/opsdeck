@@ -64,11 +64,20 @@ def many(conn, sql, params=()):
 
 
 def notify(conn, profile_id, source_type, title, notif_body="", link=None):
-    """Drop an in-app notification. Caller commits."""
+    """Drop an in-app notification. Caller commits.
+
+    Also fans out to Web Push (fire-and-forget thread), so anything the app
+    already notifies about reaches phones with the tab closed - no feature
+    needs its own push code."""
     conn.execute(
         "INSERT INTO notifications (profile_id,source_type,title,body,link) VALUES (?,?,?,?,?)",
         (profile_id, source_type, title, notif_body, link),
     )
+    try:
+        import push
+        push.send_async(profile_id, title, notif_body, link=link, tag=source_type)
+    except Exception:
+        pass          # push is best-effort; the in-app row is the record
 
 
 # ================================================================ activity

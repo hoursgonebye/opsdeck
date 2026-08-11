@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ops Deck</title>
+<!-- PWA: installable to the home screen, which is what unlocks Web Push
+     on iOS (16.4+) - Safari only grants push to installed web apps. -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#10141b">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Ops Deck">
 <link rel="stylesheet" href="/static/style.css?v={{ v }}">
 </head>
 <body>

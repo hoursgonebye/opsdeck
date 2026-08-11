@@ -152,6 +152,8 @@ All configuration is environment variables, read at startup.
 | `OPSDECK_NOTES_MIN_CHARS` | `300` | The notes gate: minimum writeup length before a level-up attempt can open. |
 | `OPSDECK_FEED_SYNC_MINUTES` | `60` | How stale a subscribed `.ics` feed may get before it refetches itself. `0` turns the sweeper off and leaves feeds manual-only. |
 | `OPSDECK_BRIEFING_TIME` | `23:45` | When the mentor's nightly briefing digest is written (local time). Empty disables it. |
+| `OPSDECK_LOW_BALANCE_CENTS` | `2500` | The cashflow guard: liquid balance minus recurring charges due in 14 days below this → a pushed warning. `0` disables. |
+| `OPSDECK_VAPID_SUB` | *(example value)* | Contact claim (`mailto:you@…`) sent to push services with each Web Push. |
 | `ANTHROPIC_API_KEY` | *(empty)* | Optional. Set it and the mentor grades in-app via the API. Leave empty to use queue mode or the subscription-backed sidecar. |
 | `OPSDECK_MENTOR_MODEL` | `claude-sonnet-4-6` | Model used in direct mode. |
 | `OPSDECK_BRIDGE_URL` | `http://terminal:7682` | Where the mentor chat sidecar lives. |
@@ -174,7 +176,7 @@ All configuration is environment variables, read at startup.
 
 ```
 app.py              Flask app; serves the shell page and the service worker
-api.py              Personal REST API (~50 endpoints), profile-scoped
+api.py              Personal REST API, profile-scoped
 social.py           The /api/joint blueprint — everything shared
 db.py               Schema, migrations, seed data
 growth.py           XP derivation, attribute math, tree state

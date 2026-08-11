@@ -484,11 +484,9 @@ async function renderBudgetsView(box) {
           <button class="btn tiny" id="rev-gen">Generate for ${monthName}</button>
         </div>
         <div id="fin-review"><div class="loading">Loading…</div></div>
-        <div class="field-row-inline fin-ask">
-          <input type="text" id="ask-q" placeholder="Ask — e.g. can I afford $80 on tools this month?">
-          <button class="btn" id="ask-go">Ask</button>
-        </div>
-        <div id="ask-out"></div>
+        <p class="settings-hint">Questions — “can I afford X”, “what should I
+        expect from my shifts” — go to the mentor (✦, bottom right). It reads
+        these same numbers and runs on your subscription, not the metered API.</p>
       </div>
     </div>`;
 
@@ -543,8 +541,6 @@ async function renderBudgetsView(box) {
     btn.disabled = false; btn.textContent = `Generate for ${monthName}`;
   });
 
-  el("ask-go").addEventListener("click", askFinance);
-  el("ask-q").addEventListener("keydown", (e) => { if (e.key === "Enter") askFinance(); });
 }
 
 async function loadRecurring() {
@@ -572,19 +568,6 @@ async function loadReview() {
     ? `<p class="fin-review-body">${esc(revs[0].body)}</p>
        <span class="card-meta">generated ${esc((revs[0].created_at || "").slice(0, 16))}</span>`
     : `<p class="empty-state small">No review for this month yet.</p>`;
-}
-
-async function askFinance() {
-  const q = el("ask-q").value.trim();
-  if (!q) return;
-  const out = el("ask-out");
-  out.innerHTML = `<div class="loading">Thinking…</div>`;
-  try {
-    const r = await API.post("/finance/ai/ask", { question: q });
-    out.innerHTML = `<p class="fin-review-body">${esc(r.answer)}</p>`;
-  } catch (e) {
-    out.innerHTML = "";
-  }
 }
 
 // ============================================================ AI categorize
