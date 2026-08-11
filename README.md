@@ -41,6 +41,7 @@ around 25 MB of RAM.
 | **Skill tree** | A pan/zoom map of ~450 skills across 12 domains — six security (networking, linux, pentest, defense, crypto, grc) and six programming (python, javascript, c, cpp, html, css). Nodes have levels 0–5 and feed weighted attributes. |
 | **Growth** | Weekly XP derived passively from what you actually did, plus a radar chart of your attribute shape with a ghost outline of four weeks ago. |
 | **Mentor** | A strict examiner that verifies skill level-ups. Chat panel runs on your Claude subscription via a sidecar container. |
+| **Finance** | A ledger built for a sub-10-second phone entry: amount → merchant (autocompleted, pre-fills its usual category and account) → done. CSV import with a new-vs-duplicate preview (Capital One, Discover, or a manual column mapper). Integer cents, no stored balances, duplicates always explicit. |
 | **TryHackMe** | Log or sync room completions, map rooms to tree nodes. A completion grants nothing on its own — it opens the door to a verification. |
 
 ### Shared ("Us" tab)
@@ -180,6 +181,7 @@ mentor.py           Verification prompts, grading, proposal application
 quicknote.py        Local heuristic routing for quick capture (zero API cost)
 recurrence.py       RRULE expansion and per-occurrence overrides
 thm.py              TryHackMe scraping and mapping
+finance.py          The /api/finance ledger - accounts, transactions, CSV import
 
 templates/
   index.html        The entire HTML shell
@@ -202,6 +204,7 @@ static/
     growth.js       XP chart, attribute radar
     chat.js         Mentor chat panel
     thm.js          TryHackMe section
+    finance.js      Ledger: quick entry, transaction list, CSV import
 
 data/               (gitignored) opsdeck.db + uploads/
 ```

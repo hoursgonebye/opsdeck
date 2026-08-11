@@ -465,3 +465,44 @@ going up" better than a single average does.
 
 `GET /api/context` carries a `health` block (7-day summary plus 30-day
 stats), so an agent gets health state without extra round trips.
+
+## Finance
+
+A personal ledger (Phase 1: accounts, transactions, categories, income
+sources, CSV import). Profile-scoped like boards: accounts, categories and
+income sources carry the profile; transactions inherit scope through their
+account. Amounts are **integer cents** everywhere — `amount_cents` in
+responses; on write you may send either `amount_cents` or a decimal string
+`amount` ("12.50"), which the server converts exactly or rejects.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/finance/accounts` | With `tx_count`. No DELETE — retire with `is_active: 0`; the ledger is the record |
+| `POST` | `/api/finance/accounts` | `name`, `type` (`checking`/`credit`/`cash`/`other`), `institution` |
+| `PATCH` | `/api/finance/accounts/{id}` | Any of those plus `is_active` |
+| `GET` | `/api/finance/transactions` | `?from&to&account_id&category_id&uncategorized=true&q&before&limit`. Returns `{rows, total, next_before}` — `before` is an id cursor, the wall's pagination style |
+| `GET` | `/api/finance/transactions/{id}` | One row with account/category names |
+| `POST` | `/api/finance/transactions` | `account_id`, `amount`/`amount_cents`, `merchant`, `direction` (`debit` default), `posted_date` (today default), `category_id`, `notes`, `is_pending` |
+| `PATCH` | `/api/finance/transactions/{id}` | Setting `category_id` stamps `category_source: manual`. `merchant_raw` is write-once by design — delete and re-log a typo |
+| `DELETE` | `/api/finance/transactions/{id}` | |
+| `POST` | `/api/finance/transactions/bulk` | `{action: "categorize"\|"delete", ids[], category_id}` |
+| `GET` | `/api/finance/merchants` | Autocomplete: recent merchants with the category/account they last used |
+| `GET` | `/api/finance/categories` | Seeded per profile; `is_transfer` rows are excluded from all spending totals |
+| `POST` | `/api/finance/categories` | `name`, `parent_id` (one level max), `is_income`, `color` |
+| `PATCH` | `/api/finance/categories/{id}` | `is_transfer` is not editable |
+| `GET`/`POST` | `/api/finance/income-sources` | Expectation only — never counted as received income |
+| `PATCH` | `/api/finance/income-sources/{id}` | `cadence`: `weekly`/`biweekly`/`semimonthly`/`monthly`/`irregular` |
+| `POST` | `/api/finance/import/preview` | multipart `file` + `account_id` (+ `mapping` JSON for unknown formats). Parses, classifies new vs duplicate, **writes nothing**. `422` with the headers when the format isn't recognized |
+| `POST` | `/api/finance/import/commit` | `{account_id, rows[]}` from the preview; `force: true` per row imports a duplicate as a distinct transaction. One DB transaction; keys re-derived server-side |
+
+**Duplicates are explicit, never silent.** A manual entry identical to an
+existing one (same account, day, amount, normalized merchant) returns
+`409 {"duplicate": true}`; retry with `force: true` to log it as a real
+second purchase. Imports mark duplicates in the preview and skip them at
+commit unless forced. Identity is `sha256(account|date|cents|merchant_normalized)`
+— forced twins get a `|n` suffix.
+
+**Recognized CSV formats:** Capital One and Discover (auto-detected by
+header signature; card-number-ish columns are dropped at parse time and
+never stored). Anything else gets a manual column-mapping fallback. Adding
+an institution is one parser + one registry entry in `finance.py`.

@@ -12,6 +12,7 @@ const SECTIONS = {
   chat: renderChat,
   joint: renderJoint,
   health: renderHealth,
+  finance: renderFinance,
   settings: renderSettings,
 };
 

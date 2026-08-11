@@ -1414,3 +1414,37 @@ a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-vis
 /* Feed events read as slightly set-apart: they're not yours to edit here. */
 .cal-item.event[data-feed] { font-style: italic; }
 .cal-item.event[data-feed]:hover { background: var(--panel-alt); cursor: default; }
+
+/* ---- Finance ---- */
+/* The quick form is the module's reason to exist: one row on desktop,
+   stacked on mobile, amount first because thumb order is amount->merchant->done. */
+.fin-quick { padding: 14px 16px; }
+.fin-quick-grid {
+  display: grid; gap: 8px;
+  grid-template-columns: 110px 1.6fr 1fr 1fr 130px auto;
+}
+.fin-amount-in { font-size: 16px; font-weight: 600; }
+.fin-income-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 8px; font-size: 12.5px; color: var(--text-muted); cursor: pointer;
+}
+.fin-filters input[type="text"] { flex: 1; min-width: 90px; }
+.fin-table td { vertical-align: middle; }
+.fin-day td {
+  padding-top: 12px; font-size: 11.5px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-muted); border-bottom: none;
+}
+.fin-row { cursor: pointer; }
+.fin-row:hover td { background: var(--panel-alt); }
+.fin-amt { text-align: right; white-space: nowrap; }
+.fin-amt.credit { color: var(--green); }
+.fin-dup td { opacity: 0.55; }
+.fin-preview { max-height: 320px; overflow-y: auto; }
+.fin-cat-list { max-height: 300px; overflow-y: auto; margin-bottom: 12px; }
+
+@media (max-width: 700px) {
+  .fin-quick-grid { grid-template-columns: 1fr 1fr; }
+  .fin-quick-grid .fin-amount-in { grid-column: 1; }
+  .fin-quick-grid #fq-merchant { grid-column: 2; }
+  .fin-quick-grid #fq-log { grid-column: 1 / -1; }
+}

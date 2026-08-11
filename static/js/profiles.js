@@ -17,6 +17,7 @@ const ALL_MODULES = [
   { key: "growth", label: "Growth", section: "growth" },
   { key: "chat", label: "Mentor", section: "chat" },
   { key: "health", label: "Health", section: "health" },
+  { key: "finance", label: "Finance", section: "finance" },
   { key: "joint", label: "Us", section: "joint" },
 ];
 

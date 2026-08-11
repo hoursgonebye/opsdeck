@@ -224,6 +224,35 @@ Singletons use `CHECK (id = 1)` so a second row is impossible.
 
 ---
 
+## Finance (schema v9)
+
+Same discipline as the growth system: `fin_transactions` is a ledger, and
+every total is a query over it — no stored balance anywhere. Money is
+integer cents; floats never touch an amount.
+
+| Table | Key columns |
+|---|---|
+| `fin_accounts` | `name`, `type` (`checking`/`credit`/`cash`/`other`), `institution`, `is_active`, **`profile_id`** |
+| `fin_categories` | `name` (unique per profile), `parent_id` (one level), `is_income`, `is_transfer`, `color`, `sort_order`, **`profile_id`** |
+| `fin_transactions` | `account_id`, `posted_date`, `amount_cents`, `direction` (`debit`/`credit`), `merchant_raw` (write-once), `merchant_normalized`, `category_id` (NULL = uncategorized), `category_source` (`manual`/`rule`/`ai`/`import`), `is_pending`, `source` (`manual`/`csv`), `dedupe_key` UNIQUE |
+| `fin_income_sources` | `name`, `expected_amount_cents` (nullable — hours vary), `cadence`, `account_id`, `is_active`, **`profile_id`** |
+
+Transactions inherit profile scope through their account (the cards→boards
+rule). `is_transfer` marks the seeded Transfers category: moving money
+between your own accounts is not spending, and aggregations exclude those
+rows by flag, not by name. There is no "Uncategorized" category row —
+`category_id NULL` is the single representation of that state.
+
+`dedupe_key = sha256(account_id|posted_date|amount_cents|merchant_normalized)`;
+a deliberately-imported duplicate (two identical coffees) gets a `|n`
+suffix, so the unique index holds without silently dropping real purchases.
+
+Indexes: `(posted_date)`, `(account_id, posted_date)`, `(category_id,
+posted_date)`, unique `dedupe_key`, plus `profile_id` on the three scoped
+tables.
+
+---
+
 ## Standalone
 
 - **`themes`** — `(id, name, is_custom, owner_profile_id, colors JSON)`.
@@ -261,6 +290,7 @@ design, since it runs on every container start.
 | 8 | **Calendar feeds.** Added `calendar_feeds`, plus `feed_id` and `external_uid` on `events`. `feed_id` NULL means the user created it; non-NULL means it came from a subscription and is replaced on each sync |
 | 7 | **Health.** Added `health_metrics` (profile-scoped, upsert on `(profile, metric, date, source)`) and `oauth_tokens`. Backfilled `health` into every existing profile's `enabled_modules`, since those rows predate the module |
 | 6 | **Per-profile growth.** Added `profile_id` to `skill_nodes`, `attributes`, `levelup_attempts`, `ai_proposals`, `thm_completions`. Each profile now has its own tree, its own stat set, and its own verification queue. Seeded the partner a 20-node non-technical starter tree with six attributes of her own, plus a board and routines |
+| 9 | **Finance.** Added `fin_accounts`, `fin_categories`, `fin_transactions`, `fin_income_sources` (all new — nothing to backfill) and seeded 15 categories per profile. Appended `finance` to every profile's `enabled_modules`, the v7 pattern |
 
 The v5 migration is additive only. Every pre-existing row backfills to
 `primary`, so nothing moves or disappears — verified on the live database:

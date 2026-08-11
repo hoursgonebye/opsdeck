@@ -14,12 +14,14 @@ from flask import Flask, render_template, send_from_directory
 from db import init_db, connect
 from api import api, API_TOKEN
 from social import social
+from finance import finance
 from recurrence import TZ_NAME
 from calendars import start_auto_sync, AUTO_SYNC_MINUTES
 
 app = Flask(__name__)
 app.register_blueprint(api)
 app.register_blueprint(social)
+app.register_blueprint(finance)
 
 # Flask's own limit; api.py enforces the friendlier per-file check.
 app.config["MAX_CONTENT_LENGTH"] = (

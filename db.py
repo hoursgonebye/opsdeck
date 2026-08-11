@@ -19,7 +19,7 @@ DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = DATA_DIR / "opsdeck.db"
 UPLOAD_DIR = DATA_DIR / "uploads"
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Tables that gain a profile_id in v5. Pre-v5 rows all belong to 'primary'.
 PROFILE_SCOPED_TABLES = ("boards", "events", "routines", "docs", "quick_notes")
@@ -488,6 +488,87 @@ CREATE TABLE IF NOT EXISTS calendar_feeds (
 );
 CREATE INDEX IF NOT EXISTS idx_feeds_profile ON calendar_feeds(profile_id);
 
+-- ==================== finance (schema v9) ====================
+--
+-- A personal ledger. Same discipline as the growth system: transactions are
+-- the ledger, and every spending total or budget figure is a query over
+-- them - no stored balance or running total anywhere. Amounts are integer
+-- cents; floats never touch money in this schema.
+--
+-- Scoping follows the boards model: fin_accounts, fin_categories and
+-- fin_income_sources carry profile_id; fin_transactions inherit scope
+-- through their account, so a transaction's profile can never disagree
+-- with its account's.
+CREATE TABLE IF NOT EXISTS fin_accounts (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id  TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  type        TEXT NOT NULL DEFAULT 'checking',    -- checking|credit|cash|other
+  institution TEXT,
+  is_active   INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_fin_accounts_profile ON fin_accounts(profile_id);
+
+-- is_transfer marks the seeded Transfers category: moving money between
+-- your own accounts is not spending, and every aggregation excludes these
+-- rows. A flag rather than a name match, so renaming the category cannot
+-- silently turn card payments back into "spending".
+CREATE TABLE IF NOT EXISTS fin_categories (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id  TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  parent_id   INTEGER REFERENCES fin_categories(id),   -- one level max, enforced in code
+  is_income   INTEGER NOT NULL DEFAULT 0,
+  is_transfer INTEGER NOT NULL DEFAULT 0,
+  color       TEXT,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (profile_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_fin_categories_profile ON fin_categories(profile_id);
+
+-- merchant_raw is never mutated after entry; merchant_normalized (lowered,
+-- punctuation stripped, whitespace collapsed) is what dedupe keys and -
+-- later - category rules match against. category_id NULL means
+-- uncategorized; there is deliberately no "Uncategorized" category row,
+-- because two representations of the same state would drift.
+CREATE TABLE IF NOT EXISTS fin_transactions (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id          INTEGER NOT NULL REFERENCES fin_accounts(id),
+  posted_date         TEXT NOT NULL,                 -- YYYY-MM-DD, drives all budget math
+  amount_cents        INTEGER NOT NULL,              -- integers only, never floats
+  direction           TEXT NOT NULL,                 -- debit|credit
+  merchant_raw        TEXT NOT NULL,
+  merchant_normalized TEXT NOT NULL,
+  category_id         INTEGER REFERENCES fin_categories(id),
+  category_source     TEXT NOT NULL DEFAULT 'manual',  -- manual|rule|ai|import
+  is_pending          INTEGER NOT NULL DEFAULT 0,
+  notes               TEXT,
+  source              TEXT NOT NULL DEFAULT 'manual',  -- manual|csv
+  dedupe_key          TEXT NOT NULL UNIQUE,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_fin_tx_date ON fin_transactions(posted_date);
+CREATE INDEX IF NOT EXISTS idx_fin_tx_account ON fin_transactions(account_id, posted_date);
+CREATE INDEX IF NOT EXISTS idx_fin_tx_category ON fin_transactions(category_id, posted_date);
+
+-- Expectation only. Actual income is a fin_transactions row with
+-- direction='credit' and an income category; nothing ever treats an
+-- expected amount as received.
+CREATE TABLE IF NOT EXISTS fin_income_sources (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id            TEXT NOT NULL,
+  name                  TEXT NOT NULL,
+  expected_amount_cents INTEGER,                     -- nullable: hours vary
+  cadence               TEXT NOT NULL DEFAULT 'irregular',
+                        -- weekly|biweekly|semimonthly|monthly|irregular
+  account_id            INTEGER REFERENCES fin_accounts(id),
+  is_active             INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_fin_income_profile ON fin_income_sources(profile_id);
+
 -- ==================== health (schema v7) ====================
 --
 -- Deliberately provider-agnostic. Google's Health API is the intended
@@ -722,6 +803,26 @@ def _migrate(conn):
                     (json.dumps(cfg), row["profile_id"]),
                 )
 
+    if current < 9:
+        # v9: the finance ledger. Tables are created by SCHEMA above and
+        # categories are seeded per-profile in init_db; the migration itself
+        # only surfaces the tab, same as v7 did for health - every profile's
+        # settings row predates the module, so DEFAULT_SETTINGS alone would
+        # leave it invisible.
+        for row in conn.execute("SELECT profile_id, settings FROM profile_settings").fetchall():
+            try:
+                cfg = json.loads(row["settings"] or "{}")
+            except (ValueError, TypeError):
+                continue
+            mods = cfg.get("enabled_modules")
+            if isinstance(mods, list) and "finance" not in mods:
+                mods.append("finance")
+                cfg["enabled_modules"] = mods
+                conn.execute(
+                    "UPDATE profile_settings SET settings=? WHERE profile_id=?",
+                    (json.dumps(cfg), row["profile_id"]),
+                )
+
     conn.execute(
         "INSERT INTO settings (key,value) VALUES ('schema_version',?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -839,6 +940,43 @@ PARTNER_ROUTINES = [
 ]
 
 
+# Every profile gets the same categories to start; they are per-profile
+# rows, so renaming or adding ones later never leaks across profiles.
+# (name, is_income, is_transfer, color, sort_order)
+SEED_FIN_CATEGORIES = [
+    ("Groceries",       0, 0, "green",  0),
+    ("Dining",          0, 0, "amber",  1),
+    ("Gas/Transport",   0, 0, "blue",   2),
+    ("Rent/Housing",    0, 0, "purple", 3),
+    ("Utilities",       0, 0, "teal",   4),
+    ("Phone/Internet",  0, 0, "teal",   5),
+    ("Subscriptions",   0, 0, "pink",   6),
+    ("Education",       0, 0, "blue",   7),
+    ("Tools/Hardware",  0, 0, "gray",   8),
+    ("Health",          0, 0, "red",    9),
+    ("Personal",        0, 0, "pink",   10),
+    ("Entertainment",   0, 0, "amber",  11),
+    ("Transfers",       0, 1, "gray",   12),
+    ("Paycheck",        1, 0, "green",  13),
+    ("Other Income",    1, 0, "green",  14),
+]
+
+
+def _seed_finance(conn, profile_id):
+    """Seed one profile's categories, only if it has none yet."""
+    n = conn.execute("SELECT COUNT(*) FROM fin_categories WHERE profile_id=?",
+                     (profile_id,)).fetchone()[0]
+    if n:
+        return
+    for name, is_income, is_transfer, color, pos in SEED_FIN_CATEGORIES:
+        conn.execute(
+            "INSERT OR IGNORE INTO fin_categories "
+            "(profile_id,name,is_income,is_transfer,color,sort_order) "
+            "VALUES (?,?,?,?,?,?)",
+            (profile_id, name, is_income, is_transfer, color, pos),
+        )
+
+
 DEFAULT_SETTINGS = {
     "theme_id": "midnight",
     "accent_override": None,
@@ -846,14 +984,14 @@ DEFAULT_SETTINGS = {
     "week_start": "monday",
     "timezone": "America/New_York",
     "enabled_modules": ["today", "boards", "calendar", "routines", "docs",
-                        "tree", "thm", "growth", "chat", "health"],
+                        "tree", "thm", "growth", "chat", "health", "finance"],
     "notifications": {"routine_reminders": True, "reminder_time": "08:00",
                       "joint_activity": True},
 }
 
 # The partner profile is the same app minus the cybersecurity progression -
 # proof that enabled_modules alone reskins a tab, no code fork required.
-PARTNER_MODULES = ["today", "boards", "calendar", "routines", "docs", "health"]
+PARTNER_MODULES = ["today", "boards", "calendar", "routines", "docs", "health", "finance"]
 JOINT_MODULES = ["joint", "calendar", "boards", "routines", "docs"]
 
 SEED_PROFILES = [
@@ -1009,6 +1147,10 @@ def init_db():
     _seed_growth(conn, "primary")
     _seed_growth(conn, "partner", PARTNER_ATTRIBUTES, PARTNER_NODES, PARTNER_EDGES)
     _seed_partner_content(conn)
+
+    # Finance categories are per-profile like the trees; no-ops once seeded.
+    for row in conn.execute("SELECT id FROM profiles").fetchall():
+        _seed_finance(conn, row["id"])
 
     conn.commit()
     conn.close()
