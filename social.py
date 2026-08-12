@@ -68,14 +68,23 @@ def notify(conn, profile_id, source_type, title, notif_body="", link=None):
 
     Also fans out to Web Push (fire-and-forget thread), so anything the app
     already notifies about reaches phones with the tab closed - no feature
-    needs its own push code."""
-    conn.execute(
+    needs its own push code.
+
+    The push tag is unique per notification, deliberately. A tag shared
+    across notifications (source_type alone) makes each new one *replace*
+    the last in the tray, silently and with no banner - which is how four
+    pings in a row produced one quiet Notification Center entry and nothing
+    on screen. Per-row tags mean every message announces itself and stays
+    readable; the once-a-day senders (morning, cashflow) are already
+    deduplicated at the source, so they gain nothing from collapsing."""
+    cur = conn.execute(
         "INSERT INTO notifications (profile_id,source_type,title,body,link) VALUES (?,?,?,?,?)",
         (profile_id, source_type, title, notif_body, link),
     )
     try:
         import push
-        push.send_async(profile_id, title, notif_body, link=link, tag=source_type)
+        push.send_async(profile_id, title, notif_body, link=link,
+                        tag=f"{source_type}-{cur.lastrowid}")
     except Exception:
         pass          # push is best-effort; the in-app row is the record
 
@@ -634,14 +643,27 @@ def ping():
     if kind not in PING_KINDS:
         return jsonify({"error": "unknown ping kind"}), 400
     frm = d.get("from_profile_id") or request.headers.get("X-Profile-Id", "primary")
+
+    # A ping needs two different people. This used to accept anything and
+    # quietly deliver - which is how a client bug sent every ping from him
+    # to her regardless of who pressed the button, with nothing to show for
+    # it. Refuse loudly instead: a wrong-sender bug should be visible the
+    # first time, not months later.
+    if frm not in ("primary", "partner") or to not in ("primary", "partner"):
+        return jsonify({"error": "a ping is between the two people, not the joint profile"}), 400
+    if frm == to:
+        return jsonify({"error": "that ping would go to yourself - this device "
+                                 "hasn't said who it belongs to (Settings > This device)"}), 400
+
     conn = connect()
     sender = one(conn, "SELECT display_name FROM profiles WHERE id=?", (frm,))
     name = sender["display_name"] if sender else "Someone"
-    notify(conn, to, "ping", f"{name} {PING_KINDS[kind]}", link="#joint")
+    notify(conn, to, "ping", f"{name} {PING_KINDS[kind]}",
+           "Tap to send one back 💛", link="#joint")
     log_activity(conn, frm, "ping", source_id=kind)
     conn.commit()
     conn.close()
-    return jsonify({"ok": True, "kind": kind})
+    return jsonify({"ok": True, "kind": kind, "from": frm, "to": to})
 
 
 # ================================================================ 4.12 flashback

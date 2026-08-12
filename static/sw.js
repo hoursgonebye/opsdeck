@@ -26,15 +26,16 @@ self.addEventListener("push", (event) => {
   if (!event.data) return;
   let payload = {};
   try { payload = event.data.json(); } catch (e) { payload = { title: event.data.text() }; }
-  event.waitUntil(
-    self.registration.showNotification(payload.title || "Ops Deck", {
-      body: payload.body || "",
-      tag: payload.tag || undefined,
-      icon: "/static/icons/icon-192.png",
-      badge: "/static/icons/icon-192.png",
-      data: { link: payload.link || null },
-    })
-  );
+  const opts = {
+    body: payload.body || "",
+    icon: "/static/icons/icon-192.png",
+    badge: "/static/icons/icon-192.png",
+    data: { link: payload.link || null },
+  };
+  // renotify is only legal alongside a tag, and it is what makes a
+  // replacement actually alert instead of swapping in silently.
+  if (payload.tag) { opts.tag = payload.tag; opts.renotify = true; }
+  event.waitUntil(self.registration.showNotification(payload.title || "Ops Deck", opts));
 });
 
 // A push service can rotate a subscription underneath us; re-register the

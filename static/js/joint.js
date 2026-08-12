@@ -144,13 +144,32 @@ function shiftJointMonth(delta) {
   renderJoint();
 }
 
-function otherProfile() {
-  // Who a ping/message goes to: the other individual, not joint.
-  const me = window.OPSDECK.activeProfile === "partner" ? "partner" : "primary";
-  return me === "primary" ? "partner" : "primary";
-}
+// Who "I" am inside the Us tab.
+//
+// This is subtler than it looks: on the Us tab activeProfile is "joint",
+// which is a pseudo-user, not a person. Reading the person off the active
+// profile therefore resolved *everyone* to primary - so her pings arrived
+// addressed from him to her, her wall posts were filed under his name, and
+// her daily-prompt answers were stored as his (which is why the
+// both-answered reveal could never fire). The device binding is the honest
+// signal: this phone belongs to a person, whichever tab it's looking at.
 function meProfile() {
-  return window.OPSDECK.activeProfile === "partner" ? "partner" : "primary";
+  const active = window.OPSDECK.activeProfile;
+  if (active === "primary" || active === "partner") return active;
+  const bound = typeof deviceProfile === "function" ? deviceProfile() : null;
+  return bound === "partner" ? "partner" : "primary";
+}
+function otherProfile() {
+  // Who a ping/message goes to: the other individual, never joint.
+  return meProfile() === "primary" ? "partner" : "primary";
+}
+function meName() {
+  const p = (window.OPSDECK.profiles || []).find((x) => x.id === meProfile());
+  return p ? p.display_name : meProfile();
+}
+function otherName() {
+  const p = (window.OPSDECK.profiles || []).find((x) => x.id === otherProfile());
+  return p ? p.display_name : otherProfile();
 }
 
 const STAGE_ART = ["🌱", "🌿", "🪴", "🌳", "🌸", "🌺", "🌟"];
@@ -233,7 +252,10 @@ async function jointHome(body) {
     </div>
 
     <div class="joint-card ping-card">
-      <div class="block-title">Send a ping</div>
+      <div class="block-title-row">
+        <div class="block-title">Send a ping</div>
+        <span class="card-meta">${esc(meName())} → ${esc(otherName())}</span>
+      </div>
       <div class="ping-row">
         ${pings.map(([k, l]) => `<button class="btn ping-btn" data-ping="${k}">${l}</button>`).join("")}
       </div>
@@ -316,8 +338,11 @@ async function jointHome(body) {
   });
   body.querySelectorAll("[data-ping]").forEach((b) =>
     b.addEventListener("click", async () => {
-      await API.post("/joint/ping", { from_profile_id: meProfile(), to_profile_id: otherProfile(), kind: b.dataset.ping });
-      toast("Ping sent 💛");
+      try {
+        await API.post("/joint/ping", {
+          from_profile_id: meProfile(), to_profile_id: otherProfile(), kind: b.dataset.ping });
+        toast(`Ping sent to ${otherName()} 💛`);
+      } catch (e) { /* toasted - e.g. this device hasn't said who it belongs to */ }
     }));
   body.querySelectorAll("[data-jump]").forEach((b) =>
     b.addEventListener("click", () => { jointTab = b.dataset.jump; renderJoint(); }));
