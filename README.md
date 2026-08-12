@@ -153,6 +153,7 @@ All configuration is environment variables, read at startup.
 | `OPSDECK_FEED_SYNC_MINUTES` | `60` | How stale a subscribed `.ics` feed may get before it refetches itself. `0` turns the sweeper off and leaves feeds manual-only. |
 | `OPSDECK_BRIEFING_TIME` | `23:45` | When the mentor's nightly briefing digest is written (local time). Empty disables it. |
 | `OPSDECK_LOW_BALANCE_CENTS` | `2500` | The cashflow guard: liquid balance minus recurring charges due in 14 days below this → a pushed warning. `0` disables. |
+| `OPSDECK_MORNING_TIME` | `08:30` | The morning nudge: a pushed one-line summary of the day (shifts, payday countdown, money state). Empty disables. |
 | `OPSDECK_VAPID_SUB` | *(example value)* | Contact claim (`mailto:you@…`) sent to push services with each Web Push. |
 | `ANTHROPIC_API_KEY` | *(empty)* | Optional. Set it and the mentor grades in-app via the API. Leave empty to use queue mode or the subscription-backed sidecar. |
 | `OPSDECK_MENTOR_MODEL` | `claude-sonnet-4-6` | Model used in direct mode. |

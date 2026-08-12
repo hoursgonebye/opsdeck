@@ -338,16 +338,22 @@ def push_vapid_key():
 @require_token
 def push_subscribe():
     import push
-    sub = body().get("subscription") or {}
+    d = body()
+    sub = d.get("subscription") or {}
     conn = connect()
-    ok = push.save_subscription(conn, active_profile(), sub)
+    # A bound device names its profile explicitly, so a boot-time refresh
+    # while viewing the Us tab still registers under the right person.
+    pid = d.get("profile")
+    if not pid or pid not in _profile_ids(conn):
+        pid = active_profile()
+    ok = push.save_subscription(conn, pid, sub, claim=bool(d.get("claim")))
     conn.commit()
     n = conn.execute("SELECT COUNT(*) FROM push_subscriptions WHERE profile_id=?",
-                     (active_profile(),)).fetchone()[0]
+                     (pid,)).fetchone()[0]
     conn.close()
     if not ok:
         return jsonify({"error": "subscription needs endpoint and keys"}), 400
-    return jsonify({"subscribed": True, "devices": n}), 201
+    return jsonify({"subscribed": True, "profile": pid, "devices": n}), 201
 
 
 @api.route("/push/unsubscribe", methods=["POST"])

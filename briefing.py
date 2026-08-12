@@ -25,6 +25,23 @@ BRIEFING_FOLDER = "Briefings"
 # next two weeks under this floor -> a pushed warning. 0 disables.
 LOW_BALANCE_CENTS = int(os.environ.get("OPSDECK_LOW_BALANCE_CENTS", "2500"))
 
+# The morning nudge: a short pushed summary of the day - shifts, payday
+# countdown, unfiled transactions, budget state - at this local time.
+# Deterministic, composed from the same data as the briefing. Empty disables.
+MORNING_TIME = os.environ.get("OPSDECK_MORNING_TIME", "08:30")
+
+# One rotating closer per weekday (Mon..Sun): the "don't forget to be a
+# person" line. Deliberately small and dumb - charm, not AI.
+CLOSERS = [
+    "Eat something real today.",
+    "Water before caffeine.",
+    "Stretch — your back will thank you at 40.",
+    "Tell someone you appreciate them.",
+    "Ten minutes on the tree beats zero.",
+    "Log purchases when they happen, not later.",
+    "Sleep is a skill. Practice tonight.",
+]
+
 _TICK_SECONDS = 60
 _stop = threading.Event()
 
@@ -235,6 +252,65 @@ def _notify_cashflow(conn, pid):
     return True
 
 
+def compose_morning(conn, pid):
+    """The day in one push notification: schedule, payday, money, a nudge."""
+    day = datetime.strptime(str(today_local()), "%Y-%m-%d")
+    parts = []
+
+    today_events = _events_between(conn, pid, day, day + timedelta(days=1))
+    if today_events:
+        bits = []
+        for occ in today_events[:2]:
+            h = _hours(occ)
+            when = "all day" if occ.get("all_day") else occ["start_at"][11:16]
+            bits.append(f"{when} {occ['title']}" + (f" ({h}h)" if h and occ.get("feed_id") else ""))
+        if len(today_events) > 2:
+            bits.append(f"+{len(today_events) - 2} more")
+        parts.append("; ".join(bits))
+    else:
+        parts.append("Nothing scheduled")
+
+    for occ in _events_between(conn, pid, day, day + timedelta(days=4)):
+        if "payday" in (occ["title"] or "").lower():
+            d = occ["start_at"][:10]
+            delta = (datetime.strptime(d, "%Y-%m-%d") - day).days
+            when = "today" if delta == 0 else "tomorrow" if delta == 1 else \
+                datetime.strptime(d, "%Y-%m-%d").strftime("%a")
+            parts.append(f"💰 Payday {when}")
+            break
+
+    summary = fin.compute_summary(conn, pid, str(today_local())[:7])
+    if summary and summary["balances"]:
+        if summary["uncategorized"]["count"]:
+            parts.append(f"{summary['uncategorized']['count']} unfiled transactions")
+        over = [c["name"] for c in summary["categories"]
+                if c.get("limit_cents") and c.get("remaining_cents", 0) < 0]
+        if over:
+            parts.append("over budget: " + ", ".join(over[:2]))
+        squeeze = cashflow_check(conn, pid)
+        if squeeze:
+            parts.append(f"money's tight ({_money(squeeze['projected_cents'])} "
+                         f"after upcoming bills)")
+
+    parts.append(CLOSERS[day.weekday()])
+    return " · ".join(parts)
+
+
+def _notify_morning(conn, pid):
+    """Push the morning nudge, at most once per profile per day."""
+    already = conn.execute(
+        "SELECT 1 FROM notifications WHERE profile_id=? AND source_type='morning' "
+        "AND date(created_at)=date('now')", (pid,)).fetchone()
+    if already:
+        return False
+    body = compose_morning(conn, pid)
+    day = datetime.strptime(str(today_local()), "%Y-%m-%d")
+    from social import notify
+    notify(conn, pid, "morning", f"☀ {day.strftime('%A')}", body, link="#today")
+    conn.commit()
+    return True
+
+
 def generate(conn, pid, date=None):
     """Compose and upsert the briefing doc. Returns (title, body)."""
     date = str(date or today_local())
@@ -268,38 +344,53 @@ def _exists_today(conn, pid):
         (pid, BRIEFING_FOLDER, f"Briefing — {today_local()}")).fetchone())
 
 
+def _parse_hhmm(s):
+    try:
+        hh, mm = (s or "").split(":")
+        return int(hh) * 60 + int(mm)
+    except ValueError:
+        return None
+
+
 def start_scheduler(connect_fn, at="23:45"):
     """
-    Write each profile's briefing once a day at the configured local time.
-    Daemon thread, same shape as the calendar-feed sweeper: checks disk (the
-    docs table), not memory, so a restart neither skips nor duplicates a day.
-    Returns the thread, or None when disabled.
+    Two daily jobs on one daemon thread: the nightly briefing write (at the
+    configured time) and the morning nudge (MORNING_TIME). Both answer "did
+    today already run" from the database - the docs table for briefings, the
+    notifications table for nudges - never from memory, so a restart
+    neither skips nor duplicates a day. Returns the thread, or None when
+    both are disabled.
     """
-    if not at:
-        return None
-    try:
-        hh, mm = at.split(":")
-        target = int(hh) * 60 + int(mm)
-    except ValueError:
+    night = _parse_hhmm(at)
+    morning = _parse_hhmm(MORNING_TIME)
+    if night is None and morning is None:
         return None
 
     def loop():
         while not _stop.wait(_TICK_SECONDS):
             now = now_local()
-            if now.hour * 60 + now.minute < target:
-                continue
+            minutes = now.hour * 60 + now.minute
             try:
                 conn = connect_fn()
                 try:
-                    for row in conn.execute(
-                            "SELECT id FROM profiles WHERE type!='joint'").fetchall():
-                        if not _exists_today(conn, row["id"]):
-                            generate(conn, row["id"])
-                            if _notify_cashflow(conn, row["id"]):
-                                print(f"  [briefing] cashflow warning for {row['id']}",
+                    profiles = [r["id"] for r in conn.execute(
+                        "SELECT id FROM profiles WHERE type!='joint'").fetchall()]
+                    if night is not None and minutes >= night:
+                        for pid in profiles:
+                            if not _exists_today(conn, pid):
+                                generate(conn, pid)
+                                if _notify_cashflow(conn, pid):
+                                    print(f"  [briefing] cashflow warning for {pid}",
+                                          flush=True)
+                                print(f"  [briefing] wrote {pid} {today_local()}",
                                       flush=True)
-                            print(f"  [briefing] wrote {row['id']} {today_local()}",
-                                  flush=True)
+                    # A four-hour window: a container that was down all
+                    # morning skips the day rather than nudging at 9pm.
+                    if morning is not None and morning <= minutes < morning + 240:
+                        for pid in profiles:
+                            if _notify_morning(conn, pid):
+                                print(f"  [briefing] morning nudge for {pid}",
+                                      flush=True)
                 finally:
                     conn.close()
             except Exception as e:

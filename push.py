@@ -60,18 +60,33 @@ def public_key():
     return _public_key_cache
 
 
-def save_subscription(conn, profile_id, sub):
-    """Store one browser's subscription. Upserts on endpoint - a device
-    re-subscribing is the same device, not a second one."""
+def save_subscription(conn, profile_id, sub, claim=False):
+    """
+    Store one browser's subscription. Upserts on endpoint - a device
+    re-subscribing is the same device, not a second one.
+
+    A device belongs to whoever *explicitly* claimed it (the notifications
+    button, the device-binding chooser). Silent boot-time refreshes pass
+    claim=False and keep the existing owner - otherwise merely browsing the
+    partner's tab at page load would quietly steal the device into her
+    notification pool.
+    """
     endpoint = (sub.get("endpoint") or "").strip()
     keys = sub.get("keys") or {}
     if not endpoint or not keys.get("p256dh") or not keys.get("auth"):
         return False
-    conn.execute(
-        "INSERT INTO push_subscriptions (profile_id, endpoint, p256dh, auth) "
-        "VALUES (?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET "
-        "profile_id=excluded.profile_id, p256dh=excluded.p256dh, auth=excluded.auth",
-        (profile_id, endpoint, keys["p256dh"], keys["auth"]))
+    if claim:
+        conn.execute(
+            "INSERT INTO push_subscriptions (profile_id, endpoint, p256dh, auth) "
+            "VALUES (?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET "
+            "profile_id=excluded.profile_id, p256dh=excluded.p256dh, auth=excluded.auth",
+            (profile_id, endpoint, keys["p256dh"], keys["auth"]))
+    else:
+        conn.execute(
+            "INSERT INTO push_subscriptions (profile_id, endpoint, p256dh, auth) "
+            "VALUES (?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET "
+            "p256dh=excluded.p256dh, auth=excluded.auth",
+            (profile_id, endpoint, keys["p256dh"], keys["auth"]))
     return True
 
 

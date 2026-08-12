@@ -22,9 +22,10 @@ services:
       # When the mentor's nightly briefing digest is written (local time).
       # Empty disables it.
       - OPSDECK_BRIEFING_TIME=${OPSDECK_BRIEFING_TIME:-23:45}
-      # Cashflow guard floor (cents); web push contact claim.
+      # Cashflow guard floor (cents); web push contact claim; morning nudge.
       - OPSDECK_LOW_BALANCE_CENTS=${OPSDECK_LOW_BALANCE_CENTS:-2500}
       - OPSDECK_VAPID_SUB=${OPSDECK_VAPID_SUB:-mailto:opsdeck@example.invalid}
+      - OPSDECK_MORNING_TIME=${OPSDECK_MORNING_TIME:-08:30}
       # Optional: connects Fitbit / Pixel Watch data via the Google Health
       # API. Left empty the Health tab still works with manual and pushed
       # readings - see .env.example for the Cloud Console setup.

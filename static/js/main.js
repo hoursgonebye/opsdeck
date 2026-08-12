@@ -181,7 +181,7 @@ async function setupNotifications() {
     }
     if (Notification.permission === "granted") {
       // Already on - re-register this device and prove the pipe end to end.
-      const ok = await ensurePushSubscription();
+      const ok = await ensurePushSubscription(true);
       try {
         const r = await API.post("/push/test", {});
         toast(ok && r.sent_to_devices
@@ -199,7 +199,7 @@ async function setupNotifications() {
     }
     sync();
     if (result === "granted") {
-      const ok = await ensurePushSubscription();
+      const ok = await ensurePushSubscription(true);
       toast(ok ? "Push notifications enabled for this device"
                : "Notifications enabled (tab-open only; push setup failed)", "info", 6000);
     } else if (result === "denied") {
@@ -223,9 +223,11 @@ async function setupNotifications() {
   pollReminders();
 }
 
-// Subscribe this browser with the server's VAPID key and register the
-// subscription under the active profile. True on success.
-async function ensurePushSubscription() {
+// Subscribe this browser with the server's VAPID key and register it. The
+// registration goes to the device's bound profile when one is set (else the
+// active tab). claim=true (explicit user action) may reassign the device;
+// the silent boot-time refresh never does.
+async function ensurePushSubscription(claim = false) {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
   try {
     const reg = await navigator.serviceWorker.ready;
@@ -237,7 +239,12 @@ async function ensurePushSubscription() {
         applicationServerKey: urlBase64ToUint8Array(key),
       });
     }
-    await API.post("/push/subscribe", { subscription: sub.toJSON() });
+    const bound = typeof deviceProfile === "function" ? deviceProfile() : null;
+    await API.post("/push/subscribe", {
+      subscription: sub.toJSON(),
+      claim,
+      profile: bound || undefined,
+    });
     return true;
   } catch (e) {
     console.warn("push subscribe failed", e);

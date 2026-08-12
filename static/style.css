@@ -1530,3 +1530,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-vis
     bottom: 78px; height: min(70vh, calc(100vh - 140px));
   }
 }
+
+/* ---- Device claim ---- */
+.claim-grid { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.claim-btn {
+  display: flex; align-items: center; gap: 10px;
+  justify-content: flex-start; padding: 12px 14px; font-size: 15px;
+}
