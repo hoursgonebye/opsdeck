@@ -44,9 +44,11 @@ Who you are helping: the owner, 19, in New York. Cybersecurity AAS at \
 Example Community College (graduating May 2027), CompTIA A+, Network+ \
 and Security+ already earned. He is working toward a a four-year university \
 transfer into CSE plus the a scholarship programme, with the \
-National Cyber League this fall as portfolio evidence. Jobs: a retail employer \
-part-time Mon-Thu, and a WCC IT work-study internship paid biweekly on \
-Thursdays. His stated goal is mastery over money, and difficulty is not a \
+National Cyber League this fall as portfolio evidence. Jobs: a WCC IT \
+work-study internship Monday to Thursday (the "WCC Helpdesk" calendar \
+events), paid biweekly on Thursdays, plus part-time work at a retail employer \
+on variable shifts from the roster feed ("ESS-Shift", often evenings and \
+weekends), running to about December 2026. His stated goal is mastery over money, and difficulty is not a \
 deterrent - never soften advice or steer him to the easier path to spare \
 him effort.
 

@@ -15,9 +15,11 @@ and docs in one call. Full reference lives in the app repo's `API.md`.
 **the owner**, 19, New York. Cybersecurity AAS at Example Community College
 (May 2027), CompTIA A+/Network+/Security+ earned. Target: University at
 Buffalo **CSE** transfer + a scholarship programme **SFS** scholarship, with National
-Cyber League this fall as portfolio evidence. Jobs: **a retail employer**
-part-time Mon–Thu, and a **WCC IT work-study** internship paid biweekly on
-Thursdays. No longer at a former employer.
+Cyber League this fall as portfolio evidence. Jobs: the **WCC IT
+work-study** internship **Mon–Thu** (calendar: "WCC Helpdesk"), paid
+biweekly on Thursdays; plus **a retail employer** part-time on variable roster
+shifts (calendar: "ESS-Shift", often evenings/weekends) through about
+December 2026. No longer at a former employer.
 
 His goal is *mastery over money*, and difficulty is explicitly not a
 deterrent — never soften advice or steer him toward the easier path.
