@@ -265,14 +265,14 @@ def main():
 
     print("\n== goals ==")
     goals = {g["name"]: g for g in ov["goals"]}
-    sfs = goals["a scholarship programme"]
-    check_eq("SFS not met", sfs["met"], False)
-    check("SFS needs this fall", sfs["needed_gpa"], 3.688, tol=0.002)
-    check_eq("SFS is reachable this fall", sfs["reachable_in_scheduled"], True)
-    check("SFS remaining units", sfs["remaining_units"], 17.0)
-    ub = goals["UB CSE transfer"]
-    check_eq("UB threshold already met", ub["met"], True)
-    core = goals["UB core courses"]
+    sfs = goals["Scholarship floor"]
+    check_eq("scholarship floor not met", sfs["met"], False)
+    check("floor needs this fall", sfs["needed_gpa"], 3.688, tol=0.002)
+    check_eq("floor is reachable this fall", sfs["reachable_in_scheduled"], True)
+    check("remaining units", sfs["remaining_units"], 17.0)
+    ub = goals["Transfer threshold"]
+    check_eq("transfer threshold already met", ub["met"], True)
+    core = goals["Core courses"]
     check_eq("core goal has no tagged courses yet", core["current_gpa"], None)
 
     print("\n== forecast ==")
@@ -297,7 +297,7 @@ def main():
     check("cumulative moved after one A", round(after["cumulative"]["gpa"], 3),
           round((100.5 + 12) / 34, 3), tol=0.001)
     check("remaining units dropped by 3",
-          [g for g in after["goals"] if g["name"] == "a scholarship programme"][0]["remaining_units"],
+          [g for g in after["goals"] if g["name"] == "Scholarship floor"][0]["remaining_units"],
           14.0)
     client.patch(f"/api/academics/courses/{course['id']}", json={"grade": ""}, headers=H)
 
@@ -305,12 +305,12 @@ def main():
     for c in fall_term["courses"]:
         if c["code"] == "MATH 140":
             client.patch(f"/api/academics/courses/{c['id']}",
-                         json={"tags": ["ub-core"], "projected_grade": "A"}, headers=H)
+                         json={"tags": ["core"], "projected_grade": "A"}, headers=H)
     after = client.get("/api/academics", headers=H).get_json()
-    core = [g for g in after["goals"] if g["name"] == "UB core courses"][0]
+    core = [g for g in after["goals"] if g["name"] == "Core courses"][0]
     check("core goal now sees 4 credits", core["remaining_units"], 4.0)
     check("core projected GPA", core["projected_gpa"], 4.0)
-    check_eq("tag surfaced", "ub-core" in after["tags"], True)
+    check_eq("tag surfaced", "core" in after["tags"], True)
 
     print("\n== the scale is editable and everything follows ==")
     r = client.put("/api/academics/scale",
@@ -373,7 +373,7 @@ def main():
     check_eq("nothing retired yet", ov["repeats"]["applied"], [])
 
     # ...but the forecast must already net out the pending removal.
-    sfs = [g for g in ov["goals"] if g["name"] == "a scholarship programme"][0]
+    sfs = [g for g in ov["goals"] if g["name"] == "Scholarship floor"][0]
     check("fall is now 20 credits", sfs["remaining_units"], 20.0)
     # (3.4 * (31 - 3 + 20) - (100.5 - 3)) / 20
     check("needed drops because the D leaves with the retake",

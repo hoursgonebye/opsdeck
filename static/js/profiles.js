@@ -28,9 +28,9 @@ const ALL_MODULES = [
 
 // ---------- Device binding ----------
 // A device claims a profile once ("whose device is this?") and from then on
-// sees only that person plus Us - his phone shows the owner + Us, hers shows
-// the partner + Us. Push registrations follow the claim, so a ping to her never
-// buzzes his pocket. Stored per-device in localStorage; changeable in
+// sees only that person plus Us - one partner's phone shows them + Us, the
+// other's shows the other + Us. Push registrations follow the claim, so a
+// ping meant for one never buzzes the other's pocket. Stored per-device in localStorage; changeable in
 // Settings. This is separation, not security: the household shares one API
 // token by design (ARCHITECTURE §3) - the boundary is the tailnet.
 

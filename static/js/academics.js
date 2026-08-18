@@ -512,7 +512,7 @@ function termModal(id) {
     <div class="field-row">
       <label class="field-label">Institution</label>
       <input type="text" id="ac-t-inst" value="${escAttr(t?.institution || "")}"
-             placeholder="Example Community College">
+             placeholder="Your college">
     </div>
     <p class="settings-hint">Season and year are read from the name, so
     “Spring 2027” sorts itself into the right place.</p>
@@ -626,7 +626,7 @@ function goalModal(id) {
     <div class="modal-head"><h2 class="modal-title">${g ? "Edit target" : "New target"}</h2></div>
     <div class="field-row">
       <label class="field-label">Name</label>
-      <input type="text" id="ac-g-name" value="${escAttr(g?.name || "")}" placeholder="a scholarship programme">
+      <input type="text" id="ac-g-name" value="${escAttr(g?.name || "")}" placeholder="Scholarship floor">
     </div>
     <div class="field-row-inline">
       <label class="field-label">Target GPA</label>

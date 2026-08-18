@@ -15,6 +15,12 @@ import sys
 import tempfile
 
 os.environ["OPSDECK_TOKEN"] = "testtoken"
+# Point at a real printer with OPSDECK_PRINTER_HOST to exercise the live
+# path; the default is TEST-NET-1, which never answers, so the suite runs
+# anywhere and proves the offline degradation instead.
+os.environ.setdefault("OPSDECK_PRINTER_HOST", "192.0.2.1")
+os.environ.setdefault("OPSDECK_PRINTER_UI_URL",
+                      "https://printer.example.ts.net:8444")
 
 _tmp = tempfile.mkdtemp(prefix="opstest-")
 import db  # noqa: E402

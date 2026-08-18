@@ -5,8 +5,7 @@ Govee - lighting control, under /api/govee.
 against this network before writing a line of this:
 
   - *Govee LAN API* (UDP 4001/4002/4003, no key, no cloud): the one Govee
-    device currently online here - an H6008 at 10.0.0.192 - answers on none
-    of those ports. Either the model has no LAN mode or it is switched off in
+    device on the network answered on none of those ports. Either the model has no LAN mode or it is switched off in
     the app. A full /24 ARP sweep found no other Govee-OUI host.
   - *BLE*: impossible from the app at all. The container is an unprivileged
     LXC where AF_BLUETOOTH is not even a supported address family, and the

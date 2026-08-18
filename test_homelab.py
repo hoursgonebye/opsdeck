@@ -66,41 +66,34 @@ def main():
     check("GET 200", r.status_code == 200)
     data = r.get_json()
     names = [d["name"] for d in data["devices"]]
-    check("ten devices seeded", len(names) == 10, len(names))
-    for want in ("Proxmox host (mini PC)", "HP laptop 15 (workstation)",
-                 "Cyberdeck (Pi 5)", "X870E build (unnamed)",
-                 "Elegoo Neptune 4 Plus", "TP-Link 5-port switch"):
+    check("example devices seeded", len(names) == 5, len(names))
+    for want in ("Hypervisor", "DNS sinkhole", "App host", "Workstation",
+                 "Network switch"):
         check(f"seeded: {want}", want in names)
-    check("the three LXC guests are present",
-          sum(1 for n in names if n.startswith("CT 10")) == 3)
 
-    hypervisor = next(d for d in data["devices"] if d["name"].startswith("Proxmox"))
-    check("host carries its real MAC", hypervisor["mac"] == "aa:bb:cc:00:00:01",
-          hypervisor["mac"])
-    check("host carries its real LAN IP", hypervisor["lan_ip"] == "10.0.0.69")
-    check("specs are populated", "i5-8500T" in hypervisor["specs"])
+    hyp = next(d for d in data["devices"] if d["name"] == "Hypervisor")
+    check("a probe target is set", hyp["probe_port"] == 8006, hyp["probe_port"])
+    check("specs are populated", "NVMe" in hyp["specs"])
 
-    x870 = next(d for d in data["devices"] if d["name"].startswith("X870E"))
-    check("the 7900X is recorded", "7900X" in x870["specs"], x870["specs"][:40])
-    check("the build is marked building", x870["status"] == "building")
-
-    switch = next(d for d in data["devices"] if "TP-Link" in d["name"])
+    switch = next(d for d in data["devices"] if d["name"] == "Network switch")
     check("the unmanaged switch has no probe port", switch["probe_port"] == 0)
 
     print("\n== recommendations ==")
     counts = data["counts"]
-    check("recommendations seeded", counts["upgrades_open"] >= 15,
+    check("recommendations seeded", counts["upgrades_open"] >= 8,
           counts["upgrades_open"])
-    check("high-severity ones exist", counts["upgrades_high"] >= 5,
+    check("high-severity ones exist", counts["upgrades_high"] >= 3,
           counts["upgrades_high"])
     lab = [u["title"] for u in data["lab_upgrades"]]
-    check("backups finding is lab-wide", any("backup" in t.lower() for t in lab))
+    check("backups are covered", any("back up" in t.lower() or "backup" in t.lower()
+                                 for t in lab))
     check("firewall finding is lab-wide", any("firewall" in t.lower() for t in lab))
     check("managed switch is recommended", any("switch" in t.lower() for t in lab))
-    check("IDS is addressed", any("ids" in t.lower() for t in lab))
+    check("network visibility is covered",
+          any("logging" in t.lower() or "ids" in t.lower() for t in lab))
 
-    x_ups = [u["title"] for u in x870["upgrades"]]
-    check("the 870E has its own recommendations", len(x_ups) >= 3, x_ups)
+    check("a recommendation can hang off a device",
+          any(d["upgrades"] for d in data["devices"]))
 
     print("\n== status distinguishes expected-off ==")
     dev = client.post("/api/homelab/devices", json={

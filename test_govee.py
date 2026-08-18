@@ -163,7 +163,7 @@ def main():
                           headers=H).status_code == 400)
         check("a device not on the account is 404",
               client.post("/api/govee/control",
-                          json={"device": "AA:BB:CC:DD:EE:FF", "action": "power", "value": 1},
+                          json={"device": "99:88:77:66:55:44", "action": "power", "value": 1},
                           headers=H).status_code == 404)
 
         print("\n== the MAC a human actually has resolves to the API's 8-byte id ==")
@@ -178,11 +178,11 @@ def main():
               sent[-1][2]["payload"]["device"] == TARGET, sent[-1][2]["payload"]["device"])
         check("case and separators do not matter",
               client.post("/api/govee/control",
-                          json={"device": "60-74-f4-1c-0c-72", "action": "power", "value": 1},
+                          json={"device": "11-22-33-44-55-66", "action": "power", "value": 1},
                           headers=H).status_code == 200)
         check("a suffix matching nothing is still 404",
               client.post("/api/govee/control",
-                          json={"device": "11:22:33:44:55:66", "action": "power", "value": 1},
+                          json={"device": "DE:AD:BE:EF:00:01", "action": "power", "value": 1},
                           headers=H).status_code == 404)
 
         print("\n== state flattening ==")

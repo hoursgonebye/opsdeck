@@ -39,12 +39,11 @@ from db import connect  # noqa: F401  - kept for symmetry with the other bluepri
 
 printer = Blueprint("printer", __name__, url_prefix="/api/printer")
 
-HOST = os.environ.get("OPSDECK_PRINTER_HOST", "10.0.0.131")
+HOST = os.environ.get("OPSDECK_PRINTER_HOST", "")
 CAMERA_PORT = os.environ.get("OPSDECK_PRINTER_CAMERA_PORT", "8080")
 # The HTTPS front for the Fluidd SPA. Empty disables the embedded dashboard
 # and the UI falls back to its own status panel plus a plain link.
-UI_URL = os.environ.get("OPSDECK_PRINTER_UI_URL",
-                        "https://opsdeck.example.ts.net:8444")
+UI_URL = os.environ.get("OPSDECK_PRINTER_UI_URL", "")
 
 MOONRAKER = f"http://{HOST}"
 CAMERA = f"http://{HOST}:{CAMERA_PORT}"

@@ -1299,7 +1299,7 @@ def _seed_academics(conn, profile_id, with_goals=False):
     handed back on the next restart.
 
     Goals are the owner's only: SEED_ACAD_GOALS encodes one specific person's
-    transfer plan, and handing "a scholarship programme 3.4" to the partner profile
+    transfer plan, and handing a scholarship GPA floor to a second profile
     would be the same category error as seeding her a pentest skill tree.
     """
     n = conn.execute("SELECT COUNT(*) FROM acad_grade_scale WHERE profile_id=?",
@@ -1360,18 +1360,20 @@ SEED_GRADE_SCALE = [
     ("TR", None, 0, 1, 12, 0),   # transfer credit
 ]
 
-# The floors that actually gate the plan. Seeded so the section is useful the
-# moment it opens rather than after a setup chore.
+# Example GPA targets, seeded so the section is useful the moment it opens.
+# Edit them to whatever actually gates your plan.
 SEED_ACAD_GOALS = [
-    ("a scholarship programme", 3.4, None,
-     "Scholarship-for-Service minimum. The scarce resource - UB's transfer bar "
-     "is far lower than this one."),
-    ("UB CSE transfer", 2.8, None,
-     "Threshold, not a ranked competition - clearing it is what matters."),
-    ("UB core courses", 2.5, "ub-core",
-     "Calculus 1, CSE 115, CSE 116, CSE 191. Fast-Track needs 3.0 over any two "
-     "of them instead."),
+    ("Scholarship floor", 3.4, None,
+     "Competitive scholarships commonly set a hard cumulative minimum. Often "
+     "the scarcest requirement - well above a transfer threshold."),
+    ("Transfer threshold", 2.8, None,
+     "A published admission minimum. Usually a bar to clear rather than a "
+     "ranked competition."),
+    ("Core courses", 2.5, "core",
+     "Scoped by tag: applies only to courses tagged 'core', so a major or "
+     "prerequisite GPA can be tracked separately from the cumulative one."),
 ]
+
 
 DEFAULT_SETTINGS = {
     "theme_id": "midnight",
@@ -1527,303 +1529,115 @@ def _seed_partner_content(conn):
 
 
 
-# The homelab inventory, seeded from the enumeration in the private
-# `homelab-footprint` repo plus a live pass over the host and the LAN. Facts
-# here were observed, not assumed - where something is unverified it says so
-# in the text rather than being presented as spec.
+# An example inventory, seeded so the section is not empty on first run. These
+# are placeholders showing the shape of a small single-node lab - replace them
+# with your own, or delete them and add devices by hand.
 #   name, kind, status, purpose, specs, hostname, lan_ip, ts_ip, mac,
 #   probe_host, probe_port, notes
 SEED_LAB_DEVICES = [
-    ("Proxmox host (mini PC)", "server", "active",
-     "The whole lab. Single-node Proxmox VE hypervisor running every service "
-     "as an unprivileged LXC container.",
-     "Lenovo mini PC 10T8SNBU00\n"
-     "Intel i5-8500T - 6C/6T, 35W, 2.1GHz base / 3.5GHz turbo\n"
-     "32GB DDR4 - 16GB SK Hynix (3200) + 16GB Samsung (2133)\n"
-     "Samsung PM981 1TB NVMe - 4% wear, 82.9TB written, 29,898 power-on hours\n"
-     "Proxmox VE 9.2.2 / Debian 13 trixie, UEFI + Secure Boot\n"
-     "Intel I219-V onboard NIC (nic0 -> vmbr0)",
-     "proxmox", "10.0.0.69", "100.64.0.10", "aa:bb:cc:00:00:01",
-     "10.0.0.69", 8006,
-     "35W part in a 1L chassis: it thermally throttles under sustained all-core "
-     "load long before 3.5GHz. Both DIMMs run at 2133 because the faster stick "
-     "clocks down to the slower one."),
+    ("Hypervisor", "server", "active",
+     "The box everything else runs on. Single-node hypervisor hosting the "
+     "guests below as containers.",
+     "6-core CPU, 32GB RAM\n1TB NVMe, no redundancy\nProxmox VE / Debian",
+     "hypervisor", "10.0.0.10", "", "",
+     "10.0.0.10", 8006,
+     "Example device. Edit or delete this and add your own hardware."),
 
-    ("CT 100 - pihole", "guest", "active",
-     "Network-wide DNS sinkhole. Ad and tracker blocking for every device on "
-     "the LAN.",
-     "Unprivileged LXC, Debian 12\n1 core / 512MB RAM / 8GB disk\n"
-     "pihole-FTL, tailscaled\nListens 53 tcp+udp, 80, 443, 22",
-     "pihole", "10.0.0.97", "100.64.0.12", "aa:bb:cc:00:00:02",
-     "10.0.0.97", 80,
-     "512MB is comfortable now but leaves little room if FTL query retention "
-     "is ever extended."),
+    ("DNS sinkhole", "guest", "active",
+     "Network-wide DNS filtering for every device on the LAN.",
+     "Container, 1 core / 512MB / 8GB disk\nListens on 53 tcp+udp and 80",
+     "dns", "10.0.0.11", "", "",
+     "10.0.0.11", 80,
+     "Example device."),
 
-    ("CT 101 - opsdeck", "guest", "active",
-     "Docker host for Ops Deck - this dashboard - and the mentor terminal "
-     "sidecar.",
-     "Unprivileged LXC, Debian 12, nesting=1\n1 core / 1GB RAM / 12GB disk\n"
-     "Docker: opsdeck (5000), opsdeck-terminal (7681)\n"
-     "Both bound to 127.0.0.1, published only via Tailscale Serve",
-     "opsdeck", "10.0.0.213", "100.64.0.11", "aa:bb:cc:00:00:03",
-     "10.0.0.213", 22,
-     "The loopback-plus-Tailscale-Serve pattern is genuinely good design: "
-     "nothing is exposed to the LAN and access inherits the tailnet identity "
-     "model. Docker-in-unprivileged-LXC stacks two isolation layers that were "
-     "not designed together, which is the tradeoff that makes it acceptable."),
+    ("App host", "guest", "active",
+     "Container host for self-hosted services, reached over a private overlay "
+     "network rather than published to the LAN.",
+     "Container, 1 core / 1GB / 12GB disk\nServices bound to 127.0.0.1",
+     "apps", "10.0.0.12", "", "",
+     "10.0.0.12", 22,
+     "Example device."),
 
-    ("CT 102 - wazuh", "guest", "active",
-     "Wazuh SIEM/XDR. Central log collection and alerting, with agents on the "
-     "hypervisor and every guest.",
-     "Unprivileged LXC, Debian 12\n4 cores / 8GB RAM / 60GB disk\n"
-     "Wazuh 4.14.7 - dashboard on https://10.0.0.98\n"
-     "Deployed 2026-08-05",
-     "wazuh", "10.0.0.98", "", "aa:bb:cc:00:00:04",
-     "10.0.0.98", 443,
-     "Closed the largest gap in the baseline: before this there was no "
-     "centralised logging, so the window between compromise and discovery was "
-     "unbounded on a network that exposes a browser-accessible shell."),
+    ("Workstation", "laptop", "active",
+     "Daily driver - where everything else gets administered from.",
+     "8-core laptop, 16GB RAM, discrete GPU",
+     "workstation", "", "", "",
+     "", 0,
+     "Example device. probe_port 0 means nothing is probed, which is right "
+     "for a machine that is not always on."),
 
-    ("HP laptop 15 (workstation)", "laptop", "active",
-     "Daily driver. Where Claude Code runs, where the Kali VM lives, and the "
-     "machine everything else is administered from.",
-     "HP laptop 15-fb3xxx\nRyzen 7 7445HS - 6C/12T Zen 4\n"
-     "RTX 4050 Laptop 6GB + Radeon 740M iGPU\n"
-     "2x8GB DDR5-5600 (both SODIMM slots full)\nWD_BLACK SN850X 2TB\n"
-     "Realtek 8852BE Wi-Fi\nWindows 11 Home, VirtualBox + Tailscale",
-     "workstation", "10.0.0.136", "100.64.0.14", "",
-     "10.0.0.136", 0,
-     "CPU and GPU are BGA-soldered - RAM and the M.2 are the only upgrade "
-     "paths, and the board caps at 32GB @ DDR5-5600. Decided 2026-08-17 not to "
-     "buy RAM during the DRAM shortage; tuning recovered idle free RAM from "
-     "0.75GB to ~8GB instead."),
-
-    ("Cyberdeck (Pi 5)", "sbc", "building",
-     "Portable wireless/RF testing deck. Wi-Fi monitor mode, sub-GHz, SDR and "
-     "GPS in one handheld unit.",
-     "Raspberry Pi 5 8GB (rev 1.1, replacement board)\n"
-     "X1200 battery/UPS HAT - I2C 0x36\n"
-     "BBQ20KBD keyboard - I2C 0x1F, out-of-tree driver\n"
-     "Adafruit Ultimate GPS - /dev/ttyAMA0 @ 9600\n"
-     "CC1101 sub-GHz - SPI0 CE0\n"
-     "Waveshare 4.3in DSI LCD 800x480, capacitive touch\n"
-     "ASUS MT7612U USB Wi-Fi - wlan1, monitor mode verified\n"
-     "Nooelec NESDR SMArt v5 - R820T, verified end to end",
-     "cyberdeck", "", "100.64.0.13", "",
-     "100.64.0.13", 22,
-     "Offline on the tailnet for 9 days as of the last check - consistent with "
-     "the rebuild. Two previous boards died to energized conductors meeting "
-     "grounded USB-C shielding; there is deliberately no fusing, so continuity "
-     "and visual inspection before power is the standing mitigation."),
-
-    ("X870E build (unnamed)", "workstation", "building",
-     "Undecided. Far and away the most capable silicon in the house and "
-     "currently doing nothing - see the recommendations below.",
-     "MSI MAG X870E Tomahawk (AM5)\n"
-     "Ryzen 9 7900X - 12C/24T Zen 4, 170W TDP\n"
-     "Corsair RM1000 - 1000W 80+ \n"
-     "1x16GB DDR5 - single channel\n"
-     "GTX 560 Ti - 2011 Fermi, placeholder\n"
-     "No storage yet",
-     "", "", "", "", "", 0,
-     "The 7900X has twice the cores and roughly four times the multicore "
-     "throughput of the i5-8500T currently running the entire lab, and it is "
-     "not plugged into anything."),
-
-    ("Elegoo Neptune 4 Plus", "printer", "active",
-     "3D printer. Klipper firmware with the Fluidd web UI and a Moonraker API.",
-     "Elegoo Neptune 4 Plus\nKlipper v0.10.0-530-g3387a9c2 on an MKS board\n"
-     "Fluidd UI behind nginx on :80\nMoonraker API proxied on the same port\n"
-     "mjpg-streamer webcam on :8080, 640x480",
-     "", "10.0.0.131", "", "aa:bb:cc:00:00:05",
-     "10.0.0.131", 80,
-     "Already wired into this dashboard: see the Printer tab. Fluidd has no "
-     "authentication of its own, so anything that can reach :80 can heat the "
-     "nozzle or move the axes."),
-
-    ("TP-Link 5-port switch", "network", "active",
-     "Unmanaged gigabit switch. Port fan-out only - no VLANs, no mirroring, no "
-     "management plane.",
-     "TP-Link 5-port unmanaged gigabit\nNo IP, no configuration interface",
-     "", "", "", "", "", 0,
-     "Nothing to probe, which is not the same as being down. Being unmanaged "
-     "is the single thing blocking both VLAN segmentation and any form of "
-     "network IDS - there is no port to mirror traffic from."),
-
-    ("Gateway / ISP router", "network", "active",
-     "Edge router, DHCP server and the only thing between the LAN and the "
-     "internet.",
-     "10.0.0.1 - consumer gateway\nHands out all DHCP leases on the /24",
-     "", "10.0.0.1", "", "aa:bb:cc:00:00:06",
-     "10.0.0.1", 80,
-     "All guests take DHCP leases from here rather than static assignments, so "
-     "a lease change can move a service out from under anything referencing it "
-     "by IP."),
+    ("Network switch", "network", "active",
+     "Unmanaged switch. Port fan-out only - no VLANs and no port mirroring.",
+     "5-port unmanaged gigabit\nNo IP, no management interface",
+     "", "", "", "",
+     "", 0,
+     "Nothing to probe, which is not the same as being down - the section "
+     "reports this as 'no probe' rather than a red dot."),
 ]
 
-# Recommendations. device_index of None means the item is about the lab as a
-# whole. Severities are rated for this environment - a single-node homelab on
-# a trusted residential LAN with remote access already behind Tailscale.
+
+# Example recommendations, seeded to show the shape. These are the findings
+# that apply to almost every small single-node lab, so they make a reasonable
+# starting checklist - but they are generic advice, not an audit of yours.
 #   device_index, title, detail, category, severity, cost, status
 SEED_LAB_UPGRADES = [
-    (None, "No backup jobs exist - single non-redundant NVMe",
-     "/etc/pve/jobs.cfg still does not exist. All three containers, the "
-     "hypervisor root and /boot/efi sit on one Samsung PM981 with no mirror "
-     "and no second copy anywhere. Drive failure is total loss. A vzdump job "
-     "for all three CTs to `local` is the ten-minute version and worth doing "
-     "today; it lands on the same disk, so follow it with replication "
-     "off-box. Rated high because it is the failure most likely to actually "
-     "happen and the least recoverable.",
-     "reliability", "high", "free (job) / $60+ (external disk)", "idea"),
+    (None, "Back up the guests, and get a copy off the box",
+     "The most likely failure in a single-node lab is the one disk dying, and "
+     "it is the least recoverable. A scheduled dump of every guest is the "
+     "ten-minute version and worth doing before anything else here. Backups "
+     "that land on the same disk they protect are not backups, so follow it "
+     "with replication to external or off-site storage.",
+     "reliability", "high", "free, plus a disk", "idea"),
 
-    (None, "Proxmox firewall is disabled datacenter-wide",
-     "pve-firewall reports disabled/running. Every guest NIC carries "
-     "firewall=1 and Proxmox has built the fwbr bridge chain for each - so the "
-     "config looks like it enforces per-guest policy and enforces nothing. "
-     "Write host rules FIRST, including an explicit allow for 22 and 8006 from "
-     "the tailnet (100.64.0.0/10) and the LAN, before enabling. Turning it on "
-     "with a default DROP and no rules locks you out of your own hypervisor.",
+    (None, "Turn on the hypervisor firewall - but write the rules first",
+     "Per-guest firewall flags often look like they enforce policy while the "
+     "datacenter-level toggle is off, which is the configuration most likely "
+     "to be misread as already handled. Write host rules before enabling, and "
+     "include an explicit allow for SSH and the management UI from the "
+     "networks you administer from. Enabling a default DROP with no rules "
+     "locks you out of your own hypervisor.",
      "security", "high", "free", "idea"),
 
-    (None, "SSH permits root login with a password, on the LAN",
-     "sshd -T still reports permitrootlogin yes and passwordauthentication "
-     "yes, answering on 0.0.0.0. Any device on the /24 - including IoT, the "
-     "printer, or anything that compromises the gateway - can attempt "
-     "unlimited password guesses against uid 0. Key auth already works. Set "
-     "PasswordAuthentication no and PermitRootLogin prohibit-password, and "
-     "verify a key session survives before closing the one you are in.",
+    (None, "Key-only SSH, no root password login",
+     "Password authentication on a LAN shared with IoT means anything on the "
+     "segment can attempt unlimited guesses against uid 0. Verify a key-based "
+     "session works, then disable password auth and root password login - and "
+     "confirm a second session before closing the one you are in.",
      "security", "high", "free", "idea"),
 
-    (None, "Managed switch - the purchase that unblocks two other things",
-     "The current switch is unmanaged, so there is no port mirroring and no "
-     "VLAN support. That single fact blocks both network IDS and any "
-     "segmentation. A TP-Link TL-SG108E or similar 8-port smart switch is "
-     "roughly $30 and provides 802.1Q VLANs plus port mirroring. This is the "
-     "cheapest item on this list with the largest unlock.",
+    (None, "A managed switch unlocks two things at once",
+     "An unmanaged switch has no VLANs and no port mirroring, which blocks "
+     "both segmentation and any form of network IDS - a host only sees its "
+     "own frames. An 8-port smart switch is around $30 and is usually the "
+     "cheapest item on a list like this with the largest unlock.",
      "capability", "medium", "~$30", "idea"),
 
-    (None, "Network IDS - realistic only after the switch",
-     "Wazuh already gives host-based detection: file integrity monitoring, log "
-     "analysis and rootcheck on every machine. What is missing is network "
-     "visibility. Suricata or Zeek needs to see traffic, which on a flat "
-     "network with an unmanaged switch it cannot - a host only sees its own "
-     "frames. Sequence: managed switch, mirror the uplink port, run Suricata "
-     "in a new LXC, ship its alerts into Wazuh. Doing it before the switch "
-     "means watching one host talk to itself.",
+    (None, "Segment IoT away from the management network",
+     "Printers, bulbs and cameras frequently ship with no authentication at "
+     "all, so anything that can reach them can drive them. Once a VLAN-capable "
+     "switch is in place, give them their own segment with no route to the "
+     "hypervisor or anything holding data.",
      "security", "medium", "free after the switch", "idea"),
 
-    (None, "Segment IoT off the trusted LAN",
-     "The printer and the Govee bulb sit on the same flat /24 as the "
-     "hypervisor and the SIEM. Fluidd has no auth at all, so anything that "
-     "reaches it can drive the printer. Once a VLAN-capable switch is in, put "
-     "the printer, the bulb and anything else that phones home on their own "
-     "VLAN with no route to the management segment.",
-     "security", "medium", "free after the switch", "idea"),
-
-    (None, "123 pending package updates on the hypervisor",
-     "Was 115 at the August baseline, now 123. Nothing here is urgent on its "
-     "own; the number only grows, and a large backlog turns a routine security "
-     "patch into a risky bulk upgrade. Snapshot or back up first, then apt "
-     "full-upgrade.",
+    (None, "Keep the host patched",
+     "A pending-update backlog only grows, and a large one turns a routine "
+     "security patch into a risky bulk upgrade. Snapshot or back up first, "
+     "then upgrade on a schedule you actually keep.",
      "security", "medium", "free", "idea"),
 
-    (None, "Management interfaces answer on the LAN, not just the tailnet",
-     "pveproxy (8006) and spiceproxy (3128) listen on all interfaces, as does "
-     "sshd. Every human path into the box already goes over Tailscale, so LAN "
-     "exposure is surface with no corresponding use. Bind them to the tailnet "
-     "interface, or cover them with the firewall rules above.",
-     "security", "medium", "free", "idea"),
+    (None, "Centralised logging",
+     "Without it, the window between a compromise and noticing it is "
+     "unbounded. A SIEM with agents on the host and every guest is the "
+     "biggest visibility gain available to a small lab, and it is free.",
+     "security", "high", "free (needs RAM)", "idea"),
 
-    (None, "Single root@pam account, no 2FA",
-     "One administrative identity, no second factor, and it is the same "
-     "account used for day-to-day work. Proxmox supports TOTP natively. A "
-     "second named admin account plus TOTP on both costs nothing.",
-     "security", "medium", "free", "idea"),
-
-    (None, "rpcbind listening on 0.0.0.0:111",
-     "Nothing on this box uses NFS. rpcbind is a historically noisy service to "
-     "leave reachable and serves no purpose here - apt purge rpcbind, or mask "
-     "it if something pulls it in as a dependency.",
-     "security", "low", "free", "idea"),
-
-    (6, "Decide what the 7900X is for - this gates every other purchase",
-     "A 12C/24T Zen 4 chip on an X870E board with a 1000W PSU is sitting idle "
-     "while a 6C/6T 35W laptop chip runs the entire lab. The decision matters "
-     "financially, not just architecturally: as a headless Proxmox host it "
-     "needs NO graphics card at all - the GTX 560 Ti is perfectly adequate for "
-     "POST and a console you will never look at - so the single most expensive "
-     "line item disappears. As a gaming or AI workstation, the GPU becomes the "
-     "dominant cost and the 560 Ti is unusable (Fermi: no modern CUDA, no AV1 "
-     "or HEVC encode).",
-     "capability", "high", "free (a decision)", "idea"),
-
-    (6, "If it becomes the host: migrate Proxmox, demote the mini PC",
-     "This solves several open findings at once and is the cheapest path to "
-     "all of them. The 7900X takes over as hypervisor; the mini PC - which "
-     "already has 32GB and a healthy 1TB NVMe - becomes the backup target, "
-     "which closes the no-backups finding without buying storage. You would "
-     "need: a boot drive for the new box, and ideally a second one to mirror. "
-     "No GPU, no new RAM strictly required to start. It also ends the 35W "
-     "thermal ceiling and the 2133MT/s DIMM mismatch in one move.",
-     "reliability", "high", "storage only", "idea"),
-
-    (6, "Second RAM stick - single channel is halving your bandwidth",
-     "One 16GB DDR5 stick runs single-channel. A matched second stick roughly "
-     "doubles memory bandwidth, which a 12-core chip feels more than most. "
-     "This is the cheapest real performance gain available - but note DDR5 is "
-     "badly inflated in the current shortage (32GB kits were $389-500 in "
-     "August), so buy a single matching 16GB stick rather than a new kit.",
-     "performance", "medium", "1x16GB DDR5", "idea"),
-
-    (6, "Storage - nothing to boot from yet",
-     "The build has no drive. If it becomes the hypervisor, two modest NVMe "
-     "drives in a ZFS mirror beats one large one: it removes the single-disk "
-     "failure mode that is currently the lab's biggest risk. If it becomes a "
-     "workstation, one drive is fine.",
-     "capacity", "high", "2x NVMe", "idea"),
-
-    (0, "Mismatched DIMMs cost you memory bandwidth for free",
-     "The SK Hynix stick is rated 3200 MT/s but both run at 2133, clocked down "
-     "to the slower Samsung module. Replacing the Samsung stick with a 3200 "
-     "part recovers the difference at no other cost. Low priority while DDR4 "
-     "prices are also inflated, and moot if the lab migrates to the 7900X.",
-     "performance", "low", "1x16GB DDR4-3200", "idea"),
-
-    (0, "No ECC memory",
-     "Error correction type is None. Acceptable for a homelab and not worth "
-     "chasing on this platform - but it is the single biggest gap between this "
-     "box and something you would trust with irreplaceable data. Worth knowing "
-     "when deciding where backups ultimately live.",
-     "reliability", "low", "platform change", "idea"),
-
-    (5, "Cyberdeck has been offline 9 days - finish or park it deliberately",
-     "Two boards have already died to shorts. There is no fusing anywhere in "
-     "the build by deliberate choice, so continuity and visual inspection "
-     "before applying power is the only thing standing between the third board "
-     "and the first two. If the rebuild is stalled, park it explicitly rather "
-     "than leaving it half-wired.",
-     "reliability", "medium", "free", "idea"),
-
-    (7, "Printer has no authentication and sits on the trusted LAN",
-     "Fluidd and Moonraker expose full machine control with no login. Anything "
-     "on the /24 can heat the nozzle, move the axes or start a job. The "
-     "tailnet HTTPS front added for the Printer tab does not change this - the "
-     "LAN path is still wide open. Covered by the IoT segmentation item above.",
-     "security", "medium", "free after the switch", "idea"),
-
-    (1, "Pi-hole has 512MB and no headroom for longer retention",
-     "Fine at the current query volume. If you ever extend FTL retention to "
-     "get useful historical DNS data - which is genuinely valuable next to a "
-     "SIEM - it will need more memory first.",
-     "capacity", "low", "free (config)", "idea"),
-
-    (None, "Guests use DHCP, not static assignments",
-     "All three containers take leases from the gateway. Anything that "
-     "references them by IP - and several things do - breaks quietly if a "
-     "lease moves. Either reserve the addresses on the gateway or set static "
-     "IPs on the containers.",
+    (0, "Reserve addresses or set them statically",
+     "Guests taking DHCP leases can move out from under anything that "
+     "references them by IP - and several things usually do. Either reserve "
+     "the addresses on the gateway or assign them statically.",
      "reliability", "low", "free", "idea"),
 ]
+
 
 
 def _seed_homelab(conn, profile_id="primary"):
