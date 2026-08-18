@@ -1,5 +1,12 @@
 # Ops Deck
 
+> **On authorship.** This codebase was written largely with AI assistance
+> (Claude). What is mine is the specification, the product decisions, the
+> operation of it in production on my own hardware, and the testing and
+> policy calls that shaped it. I did not type most of the implementation and
+> am not going to imply otherwise. Raised here because a portfolio that
+> overstates is worth less than one that is thin and honest.
+
 A self-hosted personal dashboard for one household: boards, calendar,
 routines, docs, a cybersecurity skill tree with earned (not self-granted)
 levels, an AI mentor that runs on your Claude subscription, and a shared
