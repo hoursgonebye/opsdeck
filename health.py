@@ -35,7 +35,7 @@ CLIENT_SECRET = os.environ.get("OPSDECK_GOOGLE_CLIENT_SECRET", "")
 # Must exactly match an Authorised redirect URI on the OAuth client.
 REDIRECT_URI = os.environ.get(
     "OPSDECK_GOOGLE_REDIRECT_URI",
-    "https://opsdeck.example.ts.net/api/health/callback",
+    "https://your-host.example.com/api/health/callback",
 )
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"

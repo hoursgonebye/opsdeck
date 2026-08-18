@@ -1215,7 +1215,12 @@ def derived_balance(conn, account):
     """
     anchor_cents = account["balance_anchor_cents"]
     anchor_date = account["balance_anchor_date"]
-    where = "account_id=?"
+    # Pending transactions are excluded. A pending charge has not hit the
+    # account yet - the bank shows it in its own section, above the balance,
+    # precisely because the balance does not include it. Counting it here
+    # would make every derived figure disagree with the bank by whatever
+    # happens to be in flight, which on a card can be hundreds of dollars.
+    where = "account_id=? AND is_pending=0"
     params = [account["id"]]
     if anchor_cents is not None and anchor_date:
         where += " AND posted_date>?"
@@ -1233,6 +1238,25 @@ def derived_balance(conn, account):
     if account["type"] == "credit":
         return base + row["db"] - row["cr"], basis
     return base + row["cr"] - row["db"], basis
+
+
+def pending_delta(conn, account):
+    """
+    What is in flight on one account, signed the same way as its balance:
+    for a card, how much more will be owed once everything posts; for
+    checking, the net change to expect.
+
+    Reported alongside the balance rather than folded into it, so "what the
+    bank says today" and "what is coming" stay separate numbers.
+    """
+    row = conn.execute(
+        "SELECT COALESCE(SUM(CASE WHEN direction='credit' THEN amount_cents ELSE 0 END),0) AS cr, "
+        "COALESCE(SUM(CASE WHEN direction='debit' THEN amount_cents ELSE 0 END),0) AS db, "
+        "COUNT(*) AS n FROM fin_transactions "
+        "WHERE account_id=? AND is_pending=1", (account["id"],)).fetchone()
+    delta = (row["db"] - row["cr"]) if account["type"] == "credit" \
+        else (row["cr"] - row["db"])
+    return delta, row["n"]
 
 
 def _month_of(period):
@@ -1448,12 +1472,16 @@ def compute_summary(conn, pid, period, end_override=None):
 
     accounts = many(conn, "SELECT * FROM fin_accounts WHERE profile_id=? AND is_active=1 "
                           "ORDER BY id", (pid,))
-    balances, net = [], 0
+    balances, net, net_pending = [], 0, 0
     for a in accounts:
         bal, basis = derived_balance(conn, a)
+        pend, pend_n = pending_delta(conn, a)
         balances.append({"account_id": a["id"], "name": a["name"], "type": a["type"],
-                         "balance_cents": bal, "basis": basis})
+                         "balance_cents": bal, "basis": basis,
+                         "pending_cents": pend, "pending_count": pend_n,
+                         "projected_cents": bal + pend})
         net += -bal if a["type"] == "credit" else bal
+        net_pending += -(bal + pend) if a["type"] == "credit" else (bal + pend)
 
     return {
         "period": period, "from": start, "to": end,
@@ -1465,6 +1493,7 @@ def compute_summary(conn, pid, period, end_override=None):
         "categories": categories,
         "balances": balances,
         "net_cents": net,
+        "net_projected_cents": net_pending,
     }
 
 

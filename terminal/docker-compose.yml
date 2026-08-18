@@ -3,7 +3,7 @@ services:
     build: .
     container_name: opsdeck-terminal
     # Bound to the tailnet address ONLY. Not 0.0.0.0 - the LAN
-    # (10.0.0.0/24) must not be able to reach a shell.
+    # (the LAN) must not be able to reach a shell.
     ports:
       - "127.0.0.1:7681:7681"
     environment:

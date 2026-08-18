@@ -32,4 +32,9 @@ services:
       - OPSDECK_GOOGLE_CLIENT_ID=${OPSDECK_GOOGLE_CLIENT_ID:-}
       - OPSDECK_GOOGLE_CLIENT_SECRET=${OPSDECK_GOOGLE_CLIENT_SECRET:-}
       - OPSDECK_GOOGLE_REDIRECT_URI=${OPSDECK_GOOGLE_REDIRECT_URI:-}
+      # Printer (Klipper/Moonraker). Unset disables the section.
+      - OPSDECK_PRINTER_HOST=${OPSDECK_PRINTER_HOST:-}
+      - OPSDECK_PRINTER_CAMERA_PORT=${OPSDECK_PRINTER_CAMERA_PORT:-8080}
+      # HTTPS front for the printer's web UI, so it can be iframed.
+      - OPSDECK_PRINTER_UI_URL=${OPSDECK_PRINTER_UI_URL:-}
     restart: unless-stopped

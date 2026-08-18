@@ -83,6 +83,11 @@ async function renderFinance() {
       <div class="h-value ${b.type === "credit" && b.balance_cents > 0 ? "fin-neg" : ""}">
         ${b.balance_cents < 0 ? "−" : ""}${fmtMoney(b.balance_cents)}</div>
       <div class="h-sub">${b.basis.startsWith("anchored") ? "as of " + esc(b.basis.slice(9)) : "unanchored estimate"}</div>
+      ${b.pending_count ? `
+        <div class="fin-pending" title="Not in the balance above - the bank hasn't posted these yet">
+          +${fmtMoney(Math.abs(b.pending_cents))} pending
+          <span class="ac-dim">→ ${fmtMoney(b.projected_cents)}</span>
+        </div>` : ""}
     </div>`).join("");
   const netTile = summary ? `
     <div class="fin-tile fin-net">
@@ -90,6 +95,12 @@ async function renderFinance() {
       <div class="h-value ${summary.net_cents < 0 ? "fin-neg" : ""}">
         ${summary.net_cents < 0 ? "−" : ""}${fmtMoney(summary.net_cents)}</div>
       <div class="h-sub">accounts − cards</div>
+      ${summary.net_projected_cents !== undefined
+        && summary.net_projected_cents !== summary.net_cents ? `
+        <div class="fin-pending">
+          ${summary.net_projected_cents < 0 ? "−" : ""}${fmtMoney(summary.net_projected_cents)}
+          <span class="ac-dim">once pending posts</span>
+        </div>` : ""}
     </div>` : "";
 
   panel.innerHTML = `

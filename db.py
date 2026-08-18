@@ -19,7 +19,7 @@ DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = DATA_DIR / "opsdeck.db"
 UPLOAD_DIR = DATA_DIR / "uploads"
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 16
 
 # Tables that gain a profile_id in v5. Pre-v5 rows all belong to 'primary'.
 PROFILE_SCOPED_TABLES = ("boards", "events", "routines", "docs", "quick_notes")
@@ -669,6 +669,144 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (provider, profile_id)
 );
+
+-- ==================== academics (schema v12) ====================
+--
+-- The transcript, and every GPA derived from it. Same discipline as the
+-- ledgers: no GPA is ever stored. A term GPA, a cumulative GPA and a
+-- forecast are all one query over acad_courses joined to the grade scale,
+-- so correcting a single grade - or the scale itself - re-derives every
+-- number in the section with no backfill.
+
+CREATE TABLE IF NOT EXISTS acad_terms (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id  TEXT NOT NULL,
+  name        TEXT NOT NULL,                 -- 'Fall 2025'
+  season      TEXT NOT NULL DEFAULT 'fall',  -- winter|spring|summer|fall
+  year        INTEGER NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'completed',  -- completed|in_progress|planned
+  institution TEXT NOT NULL DEFAULT '',
+  notes       TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (profile_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_acad_terms_profile ON acad_terms(profile_id, year, season);
+
+-- Scope inherits through the term, exactly like transactions inherit through
+-- accounts - a course row carries no profile_id of its own.
+--
+-- credits is REAL rather than integer-hundredths (the money rule) because a
+-- credit hour is only ever a whole number or a half, both of which binary
+-- floating point represents exactly. GPA is irreducibly fractional anyway.
+CREATE TABLE IF NOT EXISTS acad_courses (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  term_id          INTEGER NOT NULL REFERENCES acad_terms(id) ON DELETE CASCADE,
+  code             TEXT NOT NULL DEFAULT '',    -- 'CIS 110'
+  title            TEXT NOT NULL DEFAULT '',
+  credits          REAL NOT NULL DEFAULT 3,
+  grade            TEXT NOT NULL DEFAULT '',    -- '' until the term closes
+  projected_grade  TEXT NOT NULL DEFAULT '',    -- what he expects; drives the forecast
+  tags             TEXT NOT NULL DEFAULT '[]',  -- JSON array, e.g. ["ub-core"]
+  exclude_from_gpa INTEGER NOT NULL DEFAULT 0,  -- manual override
+  position         INTEGER NOT NULL DEFAULT 0,
+  notes            TEXT NOT NULL DEFAULT '',
+  -- Which earlier attempt this course is a retake of (schema v13). Under a
+  -- grade-replacement policy the original stops counting once the retake is
+  -- graded - and not one moment before, which is why this is a link rather
+  -- than the exclude_from_gpa flag. Ticking that flag today would show a GPA
+  -- the registrar has not yet agreed to. ON DELETE SET NULL so deleting an
+  -- old attempt quietly un-links rather than cascading the retake away.
+  replaces_course_id INTEGER REFERENCES acad_courses(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_acad_courses_term ON acad_courses(term_id);
+
+-- Per-profile because scales genuinely differ between institutions, and
+-- getting one wrong silently poisons every GPA in the app. `verified` marks
+-- the entries proven against a real transcript; the rest are assumptions the
+-- UI flags until the user confirms them against the catalog.
+--
+-- points NULL means the grade carries no quality points at all (W, I, P) -
+-- distinct from 0.0, which is a real F.
+CREATE TABLE IF NOT EXISTS acad_grade_scale (
+  profile_id   TEXT NOT NULL,
+  grade        TEXT NOT NULL,
+  points       REAL,
+  counts_gpa   INTEGER NOT NULL DEFAULT 1,   -- enters the GPA denominator
+  earns_credit INTEGER NOT NULL DEFAULT 1,   -- counts toward credits earned
+  sort_order   INTEGER NOT NULL DEFAULT 0,
+  verified     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (profile_id, grade)
+);
+
+-- A GPA floor that matters (SFS 3.4, UB CSE 2.8). scope_tag NULL means the
+-- cumulative GPA; a tag scopes the goal to courses carrying it, which is how
+-- "core GPA over the four UB transfer courses" is expressed without a
+-- second, parallel notion of a transcript.
+CREATE TABLE IF NOT EXISTS acad_goals (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id  TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  target_gpa  REAL NOT NULL,
+  scope_tag   TEXT,
+  note        TEXT NOT NULL DEFAULT '',
+  position    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_acad_goals_profile ON acad_goals(profile_id);
+
+-- ==================== homelab (schema v16) ====================
+--
+-- An inventory that is meant to be *argued with*, not just listed: every
+-- device carries what it is for, and recommendations hang off devices (or off
+-- the lab as a whole) with a severity and a cost so the next thing to do is
+-- obvious rather than buried in a wiki.
+--
+-- Live state is deliberately not stored. Reachability is probed on read, the
+-- same discipline as every balance and GPA in this app - a cached "online"
+-- flag is wrong the moment something is unplugged.
+
+CREATE TABLE IF NOT EXISTS lab_devices (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id   TEXT NOT NULL,
+  name         TEXT NOT NULL,
+  kind         TEXT NOT NULL DEFAULT 'other',
+                 -- server|guest|laptop|sbc|workstation|printer|network|iot|phone|other
+  status       TEXT NOT NULL DEFAULT 'active',  -- active|building|planned|retired
+  purpose      TEXT NOT NULL DEFAULT '',
+  specs        TEXT NOT NULL DEFAULT '',        -- free text, one fact per line
+  hostname     TEXT NOT NULL DEFAULT '',
+  lan_ip       TEXT NOT NULL DEFAULT '',
+  tailscale_ip TEXT NOT NULL DEFAULT '',
+  mac          TEXT NOT NULL DEFAULT '',
+  -- What to knock on to decide "up". A TCP connect, never ICMP: the app image
+  -- has no ping binary and raw sockets in a container are a fight not worth
+  -- having. Port 0 means "nothing to probe" - an unmanaged switch is not
+  -- broken just because it never answers.
+  probe_host   TEXT NOT NULL DEFAULT '',
+  probe_port   INTEGER NOT NULL DEFAULT 0,
+  notes        TEXT NOT NULL DEFAULT '',
+  position     INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_lab_devices_profile ON lab_devices(profile_id, position);
+
+-- device_id NULL means the recommendation is about the lab rather than one
+-- box - segmentation, backups, a managed switch.
+CREATE TABLE IF NOT EXISTS lab_upgrades (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id  TEXT NOT NULL,
+  device_id   INTEGER REFERENCES lab_devices(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL,
+  detail      TEXT NOT NULL DEFAULT '',
+  category    TEXT NOT NULL DEFAULT 'performance',
+                -- security|reliability|performance|capacity|cost|capability
+  severity    TEXT NOT NULL DEFAULT 'medium',   -- high|medium|low
+  cost        TEXT NOT NULL DEFAULT '',         -- free text: "$30", "free", "$400+"
+  status      TEXT NOT NULL DEFAULT 'idea',     -- idea|planned|doing|done|declined
+  position    INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_lab_upgrades_profile ON lab_upgrades(profile_id, position);
+CREATE INDEX IF NOT EXISTS idx_lab_upgrades_device ON lab_upgrades(device_id);
 """
 
 SEED = """
@@ -899,6 +1037,105 @@ def _migrate(conn):
                     (json.dumps(cfg), row["profile_id"]),
                 )
 
+    if current < 12:
+        # v12: the transcript. Tables come from SCHEMA above and the grade
+        # scale is seeded per-profile in init_db; the migration only surfaces
+        # the tab, the same thing v7 and v9 did - every existing profile's
+        # settings row predates the module, so DEFAULT_SETTINGS alone would
+        # leave Academics invisible on a database that already exists.
+        #
+        # Unlike v7/v9 this skips joint profiles on purpose: "Us" is a
+        # household pseudo-profile and a household does not have a transcript.
+        for row in conn.execute(
+            "SELECT ps.profile_id, ps.settings FROM profile_settings ps "
+            "JOIN profiles p ON p.id = ps.profile_id WHERE p.type != 'joint'"
+        ).fetchall():
+            try:
+                cfg = json.loads(row["settings"] or "{}")
+            except (ValueError, TypeError):
+                continue
+            mods = cfg.get("enabled_modules")
+            if isinstance(mods, list) and "academics" not in mods:
+                mods.append("academics")
+                cfg["enabled_modules"] = mods
+                conn.execute(
+                    "UPDATE profile_settings SET settings=? WHERE profile_id=?",
+                    (json.dumps(cfg), row["profile_id"]),
+                )
+
+    if current < 13:
+        # v13: repeated courses. A retake links to the attempt it replaces so
+        # the original can be retired automatically the moment the new grade
+        # posts. Existing rows have no repeats to backfill.
+        if "replaces_course_id" not in _columns(conn, "acad_courses"):
+            conn.execute("ALTER TABLE acad_courses ADD COLUMN replaces_course_id INTEGER")
+
+    if current < 14:
+        # v14: the printer tab. No tables - the printer is configured by env
+        # and holds no state here - so this only surfaces the nav item, and
+        # only for the owner: it is his machine, and the partner profile can
+        # switch it on from Settings if she ever wants it.
+        row = conn.execute(
+            "SELECT settings FROM profile_settings WHERE profile_id='primary'"
+        ).fetchone()
+        if row:
+            try:
+                cfg = json.loads(row["settings"] or "{}")
+            except (ValueError, TypeError):
+                cfg = None
+            if cfg is not None:
+                mods = cfg.get("enabled_modules")
+                if isinstance(mods, list) and "printer" not in mods:
+                    mods.append("printer")
+                    cfg["enabled_modules"] = mods
+                    conn.execute(
+                        "UPDATE profile_settings SET settings=? WHERE profile_id='primary'",
+                        (json.dumps(cfg),),
+                    )
+
+    if current < 15:
+        # v15: the Govee tab. Like the printer it owns no tables - the API key
+        # and chosen device live as rows in `settings` - so this only surfaces
+        # the nav item, and only for the owner.
+        row = conn.execute(
+            "SELECT settings FROM profile_settings WHERE profile_id='primary'"
+        ).fetchone()
+        if row:
+            try:
+                cfg = json.loads(row["settings"] or "{}")
+            except (ValueError, TypeError):
+                cfg = None
+            if cfg is not None:
+                mods = cfg.get("enabled_modules")
+                if isinstance(mods, list) and "govee" not in mods:
+                    mods.append("govee")
+                    cfg["enabled_modules"] = mods
+                    conn.execute(
+                        "UPDATE profile_settings SET settings=? WHERE profile_id='primary'",
+                        (json.dumps(cfg),),
+                    )
+
+    if current < 16:
+        # v16: the homelab inventory. Tables come from SCHEMA above and the
+        # seed runs in init_db; this only surfaces the tab, owner-only.
+        row = conn.execute(
+            "SELECT settings FROM profile_settings WHERE profile_id='primary'"
+        ).fetchone()
+        if row:
+            try:
+                cfg = json.loads(row["settings"] or "{}")
+            except (ValueError, TypeError):
+                cfg = None
+            if cfg is not None:
+                mods = cfg.get("enabled_modules")
+                if isinstance(mods, list) and "homelab" not in mods:
+                    mods.append("homelab")
+                    cfg["enabled_modules"] = mods
+                    conn.execute(
+                        "UPDATE profile_settings SET settings=? WHERE profile_id='primary'",
+                        (json.dumps(cfg),),
+                    )
+
     conn.execute(
         "INSERT INTO settings (key,value) VALUES ('schema_version',?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -1053,6 +1290,91 @@ def _seed_finance(conn, profile_id):
         )
 
 
+def _seed_academics(conn, profile_id, with_goals=False):
+    """
+    Seed one profile's grade scale, and for the owner its GPA goals.
+
+    The scale is seeded as a block-if-empty rather than per-row, so a user who
+    deliberately deletes a grade they don't have (say AU) doesn't get it
+    handed back on the next restart.
+
+    Goals are the owner's only: SEED_ACAD_GOALS encodes one specific person's
+    transfer plan, and handing a scholarship GPA floor to a second profile
+    would be the same category error as seeding her a pentest skill tree.
+    """
+    n = conn.execute("SELECT COUNT(*) FROM acad_grade_scale WHERE profile_id=?",
+                     (profile_id,)).fetchone()[0]
+    if not n:
+        for grade, points, counts, earns, pos, verified in SEED_GRADE_SCALE:
+            conn.execute(
+                "INSERT OR IGNORE INTO acad_grade_scale "
+                "(profile_id,grade,points,counts_gpa,earns_credit,sort_order,verified) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (profile_id, grade, points, counts, earns, pos, verified),
+            )
+
+    if not with_goals:
+        return
+    n = conn.execute("SELECT COUNT(*) FROM acad_goals WHERE profile_id=?",
+                     (profile_id,)).fetchone()[0]
+    if not n:
+        for pos, (name, target, tag, note) in enumerate(SEED_ACAD_GOALS):
+            conn.execute(
+                "INSERT INTO acad_goals (profile_id,name,target_gpa,scope_tag,note,position) "
+                "VALUES (?,?,?,?,?,?)",
+                (profile_id, name, target, tag, note, pos),
+            )
+
+
+# The grade scale seeded for a new profile.
+#
+# The letter grades below are WCC's published quality-point table, confirmed
+# against the college's own Academic Standing page and cross-checked against a
+# real transcript (B on 3 credits = 9.000 points, B+ on 3 = 10.500, A on 4 =
+# 12.000, D on 3 = 3.000, W contributing nothing at all). It is a uniform
+# half-step scale: no minus grades, and notably no D+ - so none are seeded,
+# because a phantom grade in the dropdown is a silent mis-entry waiting to
+# happen. A wrong scale is the one input that can corrupt every number in the
+# section while still looking plausible.
+#
+# The non-letter codes are left unverified: they are the usual registrar set
+# rather than anything the transcript or the catalog page proved.
+#
+# points=None means "carries no quality points at all", which is a different
+# thing from 0.0: an F is a real zero that drags the average down, a W is not
+# in the average.
+#   grade, points, counts_gpa, earns_credit, sort, verified
+SEED_GRADE_SCALE = [
+    ("A",  4.0, 1, 1,  0, 1),
+    ("B+", 3.5, 1, 1,  1, 1),
+    ("B",  3.0, 1, 1,  2, 1),
+    ("C+", 2.5, 1, 1,  3, 1),
+    ("C",  2.0, 1, 1,  4, 1),
+    ("D",  1.0, 1, 1,  5, 1),
+    ("F",  0.0, 1, 0,  6, 1),
+    ("W",  None, 0, 0,  7, 1),   # withdrawal - attempted, not earned, not averaged
+    ("I",  None, 0, 0,  8, 0),   # incomplete
+    ("P",  None, 0, 1,  9, 0),   # pass (credit, no points)
+    ("NP", None, 0, 0, 10, 0),   # no pass
+    ("AU", None, 0, 0, 11, 0),   # audit
+    ("TR", None, 0, 1, 12, 0),   # transfer credit
+]
+
+# Example GPA targets, seeded so the section is useful the moment it opens.
+# Edit them to whatever actually gates your plan.
+SEED_ACAD_GOALS = [
+    ("Scholarship floor", 3.4, None,
+     "Competitive scholarships commonly set a hard cumulative minimum. Often "
+     "the scarcest requirement - well above a transfer threshold."),
+    ("Transfer threshold", 2.8, None,
+     "A published admission minimum. Usually a bar to clear rather than a "
+     "ranked competition."),
+    ("Core courses", 2.5, "core",
+     "Scoped by tag: applies only to courses tagged 'core', so a major or "
+     "prerequisite GPA can be tracked separately from the cumulative one."),
+]
+
+
 DEFAULT_SETTINGS = {
     "theme_id": "midnight",
     "accent_override": None,
@@ -1060,14 +1382,16 @@ DEFAULT_SETTINGS = {
     "week_start": "monday",
     "timezone": "America/New_York",
     "enabled_modules": ["today", "boards", "calendar", "routines", "docs",
-                        "tree", "thm", "growth", "chat", "health", "finance"],
+                        "tree", "thm", "growth", "chat", "health", "finance",
+                        "academics", "printer", "govee", "homelab"],
     "notifications": {"routine_reminders": True, "reminder_time": "08:00",
                       "joint_activity": True},
 }
 
 # The partner profile is the same app minus the cybersecurity progression -
 # proof that enabled_modules alone reskins a tab, no code fork required.
-PARTNER_MODULES = ["today", "boards", "calendar", "routines", "docs", "health", "finance"]
+PARTNER_MODULES = ["today", "boards", "calendar", "routines", "docs", "health",
+                   "finance", "academics"]
 JOINT_MODULES = ["joint", "calendar", "boards", "routines", "docs"]
 
 SEED_PROFILES = [
@@ -1204,6 +1528,144 @@ def _seed_partner_content(conn):
         )
 
 
+
+# An example inventory, seeded so the section is not empty on first run. These
+# are placeholders showing the shape of a small single-node lab - replace them
+# with your own, or delete them and add devices by hand.
+#   name, kind, status, purpose, specs, hostname, lan_ip, ts_ip, mac,
+#   probe_host, probe_port, notes
+SEED_LAB_DEVICES = [
+    ("Hypervisor", "server", "active",
+     "The box everything else runs on. Single-node hypervisor hosting the "
+     "guests below as containers.",
+     "6-core CPU, 32GB RAM\n1TB NVMe, no redundancy\nProxmox VE / Debian",
+     "hypervisor", "10.0.0.10", "", "",
+     "10.0.0.10", 8006,
+     "Example device. Edit or delete this and add your own hardware."),
+
+    ("DNS sinkhole", "guest", "active",
+     "Network-wide DNS filtering for every device on the LAN.",
+     "Container, 1 core / 512MB / 8GB disk\nListens on 53 tcp+udp and 80",
+     "dns", "10.0.0.11", "", "",
+     "10.0.0.11", 80,
+     "Example device."),
+
+    ("App host", "guest", "active",
+     "Container host for self-hosted services, reached over a private overlay "
+     "network rather than published to the LAN.",
+     "Container, 1 core / 1GB / 12GB disk\nServices bound to 127.0.0.1",
+     "apps", "10.0.0.12", "", "",
+     "10.0.0.12", 22,
+     "Example device."),
+
+    ("Workstation", "laptop", "active",
+     "Daily driver - where everything else gets administered from.",
+     "8-core laptop, 16GB RAM, discrete GPU",
+     "workstation", "", "", "",
+     "", 0,
+     "Example device. probe_port 0 means nothing is probed, which is right "
+     "for a machine that is not always on."),
+
+    ("Network switch", "network", "active",
+     "Unmanaged switch. Port fan-out only - no VLANs and no port mirroring.",
+     "5-port unmanaged gigabit\nNo IP, no management interface",
+     "", "", "", "",
+     "", 0,
+     "Nothing to probe, which is not the same as being down - the section "
+     "reports this as 'no probe' rather than a red dot."),
+]
+
+
+# Example recommendations, seeded to show the shape. These are the findings
+# that apply to almost every small single-node lab, so they make a reasonable
+# starting checklist - but they are generic advice, not an audit of yours.
+#   device_index, title, detail, category, severity, cost, status
+SEED_LAB_UPGRADES = [
+    (None, "Back up the guests, and get a copy off the box",
+     "The most likely failure in a single-node lab is the one disk dying, and "
+     "it is the least recoverable. A scheduled dump of every guest is the "
+     "ten-minute version and worth doing before anything else here. Backups "
+     "that land on the same disk they protect are not backups, so follow it "
+     "with replication to external or off-site storage.",
+     "reliability", "high", "free, plus a disk", "idea"),
+
+    (None, "Turn on the hypervisor firewall - but write the rules first",
+     "Per-guest firewall flags often look like they enforce policy while the "
+     "datacenter-level toggle is off, which is the configuration most likely "
+     "to be misread as already handled. Write host rules before enabling, and "
+     "include an explicit allow for SSH and the management UI from the "
+     "networks you administer from. Enabling a default DROP with no rules "
+     "locks you out of your own hypervisor.",
+     "security", "high", "free", "idea"),
+
+    (None, "Key-only SSH, no root password login",
+     "Password authentication on a LAN shared with IoT means anything on the "
+     "segment can attempt unlimited guesses against uid 0. Verify a key-based "
+     "session works, then disable password auth and root password login - and "
+     "confirm a second session before closing the one you are in.",
+     "security", "high", "free", "idea"),
+
+    (None, "A managed switch unlocks two things at once",
+     "An unmanaged switch has no VLANs and no port mirroring, which blocks "
+     "both segmentation and any form of network IDS - a host only sees its "
+     "own frames. An 8-port smart switch is around $30 and is usually the "
+     "cheapest item on a list like this with the largest unlock.",
+     "capability", "medium", "~$30", "idea"),
+
+    (None, "Segment IoT away from the management network",
+     "Printers, bulbs and cameras frequently ship with no authentication at "
+     "all, so anything that can reach them can drive them. Once a VLAN-capable "
+     "switch is in place, give them their own segment with no route to the "
+     "hypervisor or anything holding data.",
+     "security", "medium", "free after the switch", "idea"),
+
+    (None, "Keep the host patched",
+     "A pending-update backlog only grows, and a large one turns a routine "
+     "security patch into a risky bulk upgrade. Snapshot or back up first, "
+     "then upgrade on a schedule you actually keep.",
+     "security", "medium", "free", "idea"),
+
+    (None, "Centralised logging",
+     "Without it, the window between a compromise and noticing it is "
+     "unbounded. A SIEM with agents on the host and every guest is the "
+     "biggest visibility gain available to a small lab, and it is free.",
+     "security", "high", "free (needs RAM)", "idea"),
+
+    (0, "Reserve addresses or set them statically",
+     "Guests taking DHCP leases can move out from under anything that "
+     "references them by IP - and several things usually do. Either reserve "
+     "the addresses on the gateway or assign them statically.",
+     "reliability", "low", "free", "idea"),
+]
+
+
+
+def _seed_homelab(conn, profile_id="primary"):
+    """Seed the inventory once. No-ops as soon as the profile has devices."""
+    n = conn.execute("SELECT COUNT(*) FROM lab_devices WHERE profile_id=?",
+                     (profile_id,)).fetchone()[0]
+    if n:
+        return
+    ids = []
+    for pos, row in enumerate(SEED_LAB_DEVICES):
+        (name, kind, status, purpose, specs, hostname, lan, ts, mac,
+         phost, pport, notes) = row
+        cur = conn.execute(
+            "INSERT INTO lab_devices (profile_id,name,kind,status,purpose,specs,"
+            "hostname,lan_ip,tailscale_ip,mac,probe_host,probe_port,notes,position) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (profile_id, name, kind, status, purpose, specs, hostname, lan, ts,
+             mac, phost, pport, notes, pos))
+        ids.append(cur.lastrowid)
+
+    for pos, (idx, title, detail, cat, sev, cost, st) in enumerate(SEED_LAB_UPGRADES):
+        conn.execute(
+            "INSERT INTO lab_upgrades (profile_id,device_id,title,detail,category,"
+            "severity,cost,status,position) VALUES (?,?,?,?,?,?,?,?,?)",
+            (profile_id, ids[idx] if idx is not None else None,
+             title, detail, cat, sev, cost, st, pos))
+
+
 def init_db():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -1224,9 +1686,14 @@ def init_db():
     _seed_growth(conn, "partner", PARTNER_ATTRIBUTES, PARTNER_NODES, PARTNER_EDGES)
     _seed_partner_content(conn)
 
-    # Finance categories are per-profile like the trees; no-ops once seeded.
-    for row in conn.execute("SELECT id FROM profiles").fetchall():
+    # Finance categories and the grade scale are per-profile like the trees;
+    # both no-op once that profile has content.
+    for row in conn.execute("SELECT id, type FROM profiles").fetchall():
         _seed_finance(conn, row["id"])
+        if row["type"] != "joint":
+            _seed_academics(conn, row["id"], with_goals=row["type"] == "primary")
+        if row["type"] == "primary":
+            _seed_homelab(conn, row["id"])
 
     conn.commit()
     conn.close()
