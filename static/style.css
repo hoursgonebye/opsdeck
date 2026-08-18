@@ -1537,3 +1537,441 @@ a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-vis
   display: flex; align-items: center; gap: 10px;
   justify-content: flex-start; padding: 12px 14px; font-size: 15px;
 }
+
+/* ===== Academics =====
+   The transcript section. Layout borrows the health tiles and the finance
+   table wholesale; what is specific here is the goal card, whose whole job
+   is to make one sentence - "you need a 3.69 across the credits you already
+   signed up for" - impossible to miss. */
+
+.ac-head-label {
+  font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--text-muted);
+}
+.head-actions .ac-gpa { font-size: 22px; font-weight: 700; }
+.ac-gpa { font-family: var(--font-mono); font-weight: 600; }
+.ac-dim { color: var(--text-muted); font-weight: 400; }
+.ac-num { text-align: right; }
+
+.ac-tile { text-align: center; padding: 14px 10px; }
+
+/* A banner, not a toast: an unconfirmed grade scale stays wrong until
+   someone acts on it, so the warning has to persist across renders. */
+.ac-warn, .ac-ok {
+  border-radius: 6px; padding: 10px 12px; margin-bottom: 14px;
+  font-size: 13px; line-height: 1.5;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.ac-warn { background: color-mix(in srgb, var(--amber) 12%, var(--panel));
+           border: 1px solid var(--amber); }
+.ac-ok   { background: color-mix(in srgb, var(--green) 12%, var(--panel));
+           border: 1px solid var(--green); }
+
+/* Neutral explainer - not a warning, nothing is wrong. */
+.ac-note {
+  border: 1px solid var(--border); border-left: 3px solid var(--blue);
+  background: var(--panel); border-radius: 6px; padding: 10px 12px;
+  margin-bottom: 14px; font-size: 12.5px; line-height: 1.55; color: var(--text-muted);
+}
+.ac-note strong { color: var(--text); }
+
+/* A superseded attempt stays visible - it is still on the real transcript -
+   but should not read as live. */
+.ac-replaced td:nth-child(1), .ac-replaced td:nth-child(2) { text-decoration: line-through; }
+.ac-replaced td { opacity: .6; }
+.tag.t-red   { color: var(--red);   background: color-mix(in srgb, var(--red) 15%, var(--panel-alt)); }
+.tag.t-amber { color: var(--amber); background: color-mix(in srgb, var(--amber) 15%, var(--panel-alt)); }
+.tag.t-blue  { color: var(--blue);  background: color-mix(in srgb, var(--blue) 15%, var(--panel-alt)); }
+
+/* ---- goals ---- */
+.ac-goals {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 10px; margin-bottom: 16px;
+}
+.ac-goal { padding: 13px 14px; border-left: 3px solid var(--border); }
+.ac-goal.met       { border-left-color: var(--green); }
+.ac-goal.projected { border-left-color: var(--amber); }
+.ac-goal.short     { border-left-color: var(--red); }
+/* An empty scope is not a failing one - it gets no colour and no alarm. */
+.ac-goal.empty     { border-left-color: var(--border); opacity: .85; }
+.ac-goal-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ac-goal-name { font-weight: 600; flex: 1; }
+.ac-goal-nums {
+  display: flex; gap: 14px; flex-wrap: wrap; margin: 8px 0 6px;
+  font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);
+}
+.ac-goal-nums .ac-gpa { color: var(--text); font-size: 14px; }
+.ac-goal-verdict { font-size: 13px; line-height: 1.55; margin-top: 8px; }
+.ac-goal-note {
+  font-size: 11.5px; color: var(--text-muted); margin-top: 7px;
+  padding-top: 7px; border-top: 1px solid var(--border); line-height: 1.5;
+}
+
+/* Two overlaid fills so "where you are" and "where projections put you" read
+   as one bar rather than two charts; the target is a hard line because it is
+   a threshold, not a gradient. */
+.ac-bar {
+  position: relative; height: 8px; border-radius: 4px;
+  background: var(--panel-alt); overflow: hidden;
+}
+.ac-bar-proj { position: absolute; inset: 0 auto 0 0; background: var(--amber); opacity: .35; }
+.ac-bar-fill { position: absolute; inset: 0 auto 0 0; background: var(--blue); }
+.ac-bar-target {
+  position: absolute; top: -2px; bottom: -2px; width: 2px;
+  background: var(--text); transform: translateX(-1px);
+}
+
+/* ---- term-by-term trend ---- */
+.ac-trend { padding: 12px 14px; margin-bottom: 16px; }
+.ac-trend-row {
+  display: grid; grid-template-columns: 110px 1fr 46px 84px;
+  align-items: center; gap: 10px; padding: 3px 0; font-size: 12.5px;
+}
+.ac-trend-name { color: var(--text-muted); font-family: var(--font-mono); font-size: 11.5px; }
+.ac-trend-bar { height: 7px; border-radius: 4px; background: var(--panel-alt); overflow: hidden; }
+.ac-trend-bar span { display: block; height: 100%; background: var(--blue); }
+.ac-trend-val { font-family: var(--font-mono); font-weight: 600; text-align: right; }
+.ac-trend-cum { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+
+/* ---- what-if ---- */
+.ac-whatif { padding: 13px 14px; }
+.ac-whatif .field-row-inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ac-whatif input[type="number"] { width: 88px; }
+.ac-wi-out:not(:empty) {
+  margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border);
+}
+.ac-wi-line { font-size: 13px; line-height: 1.6; }
+.ac-wi-line.muted { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+
+/* ---- transcript ---- */
+.ac-terms { display: flex; flex-direction: column; gap: 10px; }
+.ac-term { padding: 0; overflow: hidden; }
+.ac-term-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 11px 14px; cursor: pointer;
+}
+.ac-term-head:hover { background: var(--panel-alt); }
+.ac-term-toggle { color: var(--text-muted); width: 12px; }
+.ac-term-name { font-weight: 600; min-width: 96px; }
+.ac-term-gpa { font-size: 12.5px; color: var(--text-muted); }
+.ac-term-meta {
+  font-size: 11.5px; color: var(--text-muted); font-family: var(--font-mono);
+  margin-left: auto;
+}
+.ac-term-btns { display: flex; gap: 5px; }
+
+.ac-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.ac-table th {
+  text-align: left; font-family: var(--font-mono); font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted);
+  padding: 7px 9px; border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.ac-table td { padding: 5px 9px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.ac-table .mono { font-family: var(--font-mono); }
+.ac-table tr:hover td { background: var(--panel-alt); }
+.ac-grade-sel { padding: 2px 5px; font-size: 12.5px; min-width: 62px; }
+/* A projected grade is a guess, and should not read with the same weight as
+   a grade the registrar actually issued. */
+.ac-grade-sel.proj { color: var(--text-muted); font-style: italic; }
+.ac-row-actions { display: flex; gap: 4px; justify-content: flex-end; }
+.ac-term .field-row-inline { padding: 9px 12px; }
+
+/* ---- import ---- */
+.ac-import-text { width: 100%; font-family: var(--font-mono); font-size: 12px; }
+.ac-commit-row {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  margin: 12px 0; font-size: 13px;
+}
+.ac-prev-term { padding: 11px 13px; margin-bottom: 9px; }
+.ac-prev-term.bad { border-left: 3px solid var(--red); }
+.ac-prev-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 12.5px; }
+.ac-prev-courses { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 9px; }
+.ac-prev-course { font-size: 11.5px; color: var(--text-muted); }
+.ac-disc { margin: 8px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+.ac-disc li { margin-bottom: 2px; }
+
+/* ---- scale ---- */
+.ac-scale-table { max-width: 620px; }
+.ac-scale-table input[type="number"] { width: 74px; padding: 2px 5px; }
+
+@media (max-width: 720px) {
+  .ac-goals { grid-template-columns: 1fr; }
+  .ac-trend-row { grid-template-columns: 84px 1fr 40px; }
+  .ac-trend-cum { display: none; }
+  .ac-term-meta { margin-left: 0; width: 100%; }
+  /* The transcript table is the one genuinely wide thing in this section;
+     it scrolls inside its own box rather than dragging the page sideways. */
+  .ac-term table { display: block; overflow-x: auto; white-space: nowrap; }
+}
+
+/* ===== Printer =====
+   Camera beside state on a desktop, stacked on a phone. The camera box holds
+   a fixed aspect so a dropped frame or a slow first snapshot doesn't make the
+   whole page jump. */
+
+.pr-grid {
+  display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 10px; margin-bottom: 16px;
+}
+.pr-cam-card, .pr-status-card { padding: 12px 14px; }
+.pr-cam-head { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+.pr-cam-head .block-title { margin: 0; flex: 0 0 auto; }
+.pr-cam-note { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+
+.pr-cam {
+  position: relative; width: 100%; aspect-ratio: 4 / 3;
+  background: #000; border: 1px solid var(--border); border-radius: 6px;
+  overflow: hidden; display: flex; align-items: center; justify-content: center;
+}
+.pr-cam img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.pr-cam-placeholder {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; color: var(--text-muted); font-size: 12.5px;
+  font-family: var(--font-mono);
+}
+
+.pr-temps { display: flex; gap: 18px; margin-bottom: 12px; }
+.pr-temp-val { font-size: 21px; font-weight: 700; line-height: 1.2; margin-top: 3px; }
+.pr-job { border-top: 1px solid var(--border); padding-top: 11px; }
+.pr-file {
+  font-size: 12px; margin-bottom: 8px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.pr-bar { height: 10px; }
+.pr-job-meta {
+  display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px;
+  font-size: 11.5px; color: var(--text-muted); font-family: var(--font-mono);
+}
+.pr-msg {
+  margin-top: 10px; font-size: 12px; color: var(--amber);
+  border-left: 2px solid var(--amber); padding-left: 8px;
+}
+.pr-err {
+  margin-top: 8px; font-size: 11px; color: var(--text-muted);
+  word-break: break-all;
+}
+
+/* Fluidd is a full desktop app; anything shorter than this and it spends the
+   whole height on its own toolbars. */
+.pr-ui-frame {
+  margin-top: 12px; border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; background: var(--panel);
+}
+.pr-ui-frame iframe {
+  width: 100%; height: min(78vh, 900px); border: 0; display: block;
+}
+
+@media (max-width: 860px) {
+  .pr-grid { grid-template-columns: 1fr; }
+  .pr-ui-frame iframe { height: 70vh; }
+}
+
+/* ===== Govee lights ===== */
+
+.gv-setup { padding: 14px 16px; max-width: 620px; }
+.gv-steps {
+  margin: 10px 0 14px; padding-left: 20px; font-size: 13px;
+  line-height: 1.75; color: var(--text-muted);
+}
+.gv-steps strong { color: var(--text); }
+.gv-setup input[type="password"] {
+  flex: 1; min-width: 220px; font-family: var(--font-mono);
+}
+
+.gv-picker { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.gv-card { padding: 14px 16px; max-width: 620px; }
+.gv-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.gv-name { font-weight: 600; }
+.gv-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.gv-head .btn { margin-left: auto; min-width: 64px; }
+
+/* The one piece of state worth reading across the room: lit and what colour. */
+.gv-bulb {
+  width: 34px; height: 34px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--panel-alt); border: 1px solid var(--border);
+  transition: background .25s, box-shadow .25s;
+}
+.gv-bulb.on {
+  background: var(--bulb, var(--amber));
+  border-color: transparent;
+  box-shadow: 0 0 16px 2px var(--bulb, var(--amber));
+}
+
+.gv-ctl { margin-bottom: 16px; }
+.gv-ctl .h-label { margin-bottom: 7px; }
+.gv-ctl input[type="range"] { width: 100%; accent-color: var(--amber); }
+
+.gv-swatches { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+.gv-sw {
+  width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
+  border: 2px solid var(--border); padding: 0;
+  transition: transform .1s, border-color .15s;
+}
+.gv-sw:hover { transform: scale(1.12); border-color: var(--text); }
+.gv-swatches input[type="color"] {
+  width: 34px; height: 34px; padding: 0; border: 1px solid var(--border);
+  border-radius: 6px; background: none; cursor: pointer;
+}
+.gv-presets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
+.gv-card.offline .gv-name { color: var(--text-muted); }
+.gv-offline { margin-bottom: 14px; }
+/* Controls stay visible but inert - hiding them would make the panel jump
+   every time the bulb drops off Wi-Fi. */
+.gv-disabled { opacity: .4; pointer-events: none; filter: saturate(.3); }
+
+/* ===== Calendar: day panel =====
+   A month cell fits three or four pills on a desktop and about one on a
+   phone, so the grid is a map and this panel is where a day is actually
+   read. Selecting a day is the primary interaction now, not editing an
+   event straight from a 14px pill. */
+
+.cal-cell.selected {
+  outline: 2px solid var(--amber); outline-offset: -2px;
+  background: var(--panel-alt);
+}
+.cal-cell { cursor: pointer; }
+.cal-daynum { display: flex; align-items: center; gap: 5px; }
+/* The count is what makes a crowded day legible on a phone, where the pills
+   themselves are clipped to one line. */
+.cal-count {
+  margin-left: auto; font-family: var(--font-mono); font-size: 9.5px;
+  background: var(--panel-alt); color: var(--text-muted);
+  border-radius: 8px; padding: 0 5px; line-height: 1.5;
+}
+.cal-cell.selected .cal-count { background: var(--amber); color: var(--on-accent, #10141b); }
+
+.cal-day-panel { margin-top: 12px; padding: 0; overflow: hidden; }
+.cal-day-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 11px 14px; border-bottom: 1px solid var(--border);
+  background: var(--panel-alt);
+}
+.cal-day-date { font-weight: 600; }
+.cal-day-n {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+  margin-left: auto;
+}
+.cal-day-row {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer;
+}
+.cal-day-row:last-child { border-bottom: 0; }
+.cal-day-row:hover { background: var(--panel-alt); }
+.cal-day-when {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted);
+  min-width: 82px; flex: 0 0 auto; padding-top: 1px;
+}
+.cal-day-row .dot { margin-top: 6px; flex: 0 0 auto; }
+.cal-day-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cal-day-title { font-size: 13.5px; line-height: 1.4; }
+.cal-day-sub { font-size: 11.5px; color: var(--text-muted); word-break: break-word; }
+.cal-day-sub a { color: var(--blue); }
+/* Descriptions can be paragraphs (an .ics import often is); clamp so one
+   verbose event cannot push the rest of the day off screen. */
+.cal-day-desc {
+  font-size: 11.5px; color: var(--text-muted); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cal-day-row.card .cal-day-when { color: var(--amber); }
+
+@media (max-width: 820px) {
+  .cal-day-when { min-width: 60px; font-size: 11px; }
+  .cal-day-head { padding: 10px 12px; }
+  .cal-day-row { padding: 10px 12px; }
+}
+
+/* Pending money, shown next to a balance but never inside it. */
+.fin-pending {
+  margin-top: 6px; font-size: 11px; font-family: var(--font-mono);
+  color: var(--amber);
+}
+
+/* ===== Homelab ===== */
+
+.hl-tiles { margin-bottom: 14px; }
+.ac-tile.hl-alarm { border-left: 3px solid var(--red); }
+
+.hl-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 10px; margin-bottom: 18px;
+}
+.hl-card {
+  padding: 13px 15px; cursor: pointer;
+  border-left: 3px solid var(--border); transition: border-color .15s;
+}
+.hl-card.open { grid-column: 1 / -1; cursor: default; }
+.hl-card.state-up { border-left-color: var(--green); }
+.hl-card.state-down { border-left-color: var(--red); }
+.hl-card.state-no-probe,
+.hl-card.state-expected-off { border-left-color: var(--border); }
+
+.hl-head { display: flex; align-items: center; gap: 9px; }
+.hl-icon { color: var(--text-muted); font-size: 15px; }
+.hl-name { font-weight: 600; flex: 1; }
+.hl-state {
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted);
+  display: flex; align-items: center; gap: 5px; white-space: nowrap;
+}
+.hl-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--gray);
+  display: inline-block;
+}
+.state-up .hl-dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.state-down .hl-dot { background: var(--red); }
+
+.hl-meta {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  margin: 8px 0 7px; font-size: 11px;
+}
+.hl-purpose { font-size: 12.5px; line-height: 1.55; color: var(--text-muted); }
+
+.hl-specs {
+  margin-top: 11px; padding: 9px 11px; background: var(--panel-alt);
+  border-radius: 6px; font-family: var(--font-mono); font-size: 11px;
+  line-height: 1.75; color: var(--text-muted);
+}
+.hl-notes {
+  margin-top: 10px; font-size: 12px; line-height: 1.6;
+  border-left: 2px solid var(--blue); padding-left: 9px; color: var(--text-muted);
+}
+.hl-sub-title {
+  margin: 14px 0 7px; font-family: var(--font-mono); font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .07em; color: var(--text-muted);
+}
+.hl-card-actions { margin-top: 12px; }
+
+/* ---- recommendations ---- */
+.hl-roadmap { display: flex; flex-direction: column; gap: 8px; }
+.hl-up {
+  background: var(--panel); border: 1px solid var(--border);
+  border-left: 3px solid var(--border); border-radius: 6px; padding: 10px 13px;
+  margin-bottom: 8px;
+}
+.hl-up.sev-high { border-left-color: var(--red); }
+.hl-up.sev-medium { border-left-color: var(--amber); }
+.hl-up.sev-low { border-left-color: var(--gray); }
+/* Done items stay visible - the record of what was fixed is half the value of
+   a baseline - but stop competing for attention. */
+.hl-up.done { opacity: .5; }
+.hl-up.done .hl-up-title { text-decoration: line-through; }
+.hl-up-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hl-up-title { font-size: 13px; font-weight: 600; flex: 1; min-width: 180px; }
+.hl-up-cost { font-size: 11px; color: var(--amber); white-space: nowrap; }
+.hl-up-detail {
+  margin-top: 7px; font-size: 12px; line-height: 1.65; color: var(--text-muted);
+}
+.hl-up-actions { display: flex; gap: 6px; align-items: center; margin-top: 9px; }
+.hl-up-status { font-size: 11.5px; padding: 2px 5px; }
+
+.hl-scan { max-height: 420px; overflow-y: auto; margin-top: 10px; }
+.hl-scan-row {
+  display: flex; gap: 10px; align-items: center; padding: 6px 4px;
+  border-bottom: 1px solid var(--border); font-size: 12.5px;
+}
+.hl-scan-row.new { color: var(--amber); }
+
+@media (max-width: 720px) {
+  .hl-grid { grid-template-columns: 1fr; }
+}

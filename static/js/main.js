@@ -12,12 +12,22 @@ const SECTIONS = {
   joint: renderJoint,
   health: renderHealth,
   finance: renderFinance,
+  academics: renderAcademics,
+  printer: renderPrinter,
+  govee: renderGovee,
+  homelab: renderHomelab,
   settings: renderSettings,
 };
 
 let activeSection = "today";
 
 function go(section) {
+  // Sections that poll must be told they are leaving. Otherwise the printer
+  // keeps fetching camera frames from behind whatever tab you switched to.
+  if (activeSection === "printer" && section !== "printer"
+      && typeof stopPrinterPolling === "function") {
+    stopPrinterPolling();
+  }
   activeSection = section;
   document.querySelectorAll(".node").forEach((n) =>
     n.classList.toggle("active", n.dataset.section === section));
@@ -48,7 +58,9 @@ function syncMobileTitle(section) {
   const labels = {
     today: "Today", board: "Boards", calendar: "Calendar", routines: "Routines",
     docs: "Docs", tree: "Skill tree", thm: "TryHackMe", growth: "Growth",
-    chat: "Mentor", joint: "Us", health: "Health", settings: "Settings",
+    chat: "Mentor", joint: "Us", health: "Health", finance: "Finance",
+    academics: "Academics", printer: "Printer", govee: "Lights", homelab: "Homelab",
+    settings: "Settings",
   };
   t.textContent = labels[section] || section;
 }

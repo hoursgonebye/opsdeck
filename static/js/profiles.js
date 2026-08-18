@@ -19,6 +19,10 @@ const ALL_MODULES = [
   // bottom-right corner now, present on every section rather than a tab.
   { key: "health", label: "Health", section: "health" },
   { key: "finance", label: "Finance", section: "finance" },
+  { key: "academics", label: "Academics", section: "academics" },
+  { key: "printer", label: "Printer", section: "printer" },
+  { key: "govee", label: "Lights", section: "govee" },
+  { key: "homelab", label: "Homelab", section: "homelab" },
   { key: "joint", label: "Us", section: "joint" },
 ];
 

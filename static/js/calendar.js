@@ -5,6 +5,13 @@
 let calYear = new Date().getFullYear();
 let calMonth = new Date().getMonth(); // 0-indexed
 
+// The day a tap opened, and everything bucketed for the visible grid. A month
+// cell can only ever show three or four items before it runs out of room -
+// on a phone it is closer to one - so the grid is a map, not a reader, and the
+// day panel is where you actually read a day.
+let calSelected = null;
+let calByDate = {};
+
 async function renderCalendar() {
   const panel = el("panel");
   panel.innerHTML = `<div class="loading">Loading…</div>`;
@@ -30,6 +37,11 @@ async function renderCalendar() {
       kind: "event", title: o.title, color: o.color,
       event_id: o.event_id, occurrence: o.occurrence, rrule: o.rrule,
       feed_id: o.feed_id || null,
+      // Carried through so the day panel can render a full entry without a
+      // second round trip per event.
+      start_at: o.start_at, end_at: o.end_at, all_day: o.all_day,
+      location: o.location || "", description: o.description || "",
+      startDay, endDay,
     };
 
     if (endDay <= startDay) {
@@ -55,6 +67,7 @@ async function renderCalendar() {
     if (!c.due_at || c.completed) return;
     (byDate[c.due_at.slice(0, 10)] ||= []).push({
       kind: "card", title: c.title, color: "gray", time: "", card_id: c.id,
+      board_title: b.title, list_title: l.title,
     });
   })));
 
@@ -62,17 +75,25 @@ async function renderCalendar() {
   // visual line as it crosses the week.
   Object.values(byDate).forEach((items) =>
     items.sort((a, b) => (b.span ? 1 : 0) - (a.span ? 1 : 0)));
+  calByDate = byDate;
 
   const today = todayISO();
+  // Opening the month with a day already selected: today if it's in view,
+  // otherwise nothing - guessing a different day would be noise.
+  if (calSelected && !byDate[calSelected]
+      && calSelected.slice(0, 7) !== `${calYear}-${pad(calMonth + 1)}`) {
+    calSelected = null;
+  }
   let cells = "";
   let cursor = gridStart;
   while (cursor <= gridEnd) {
     const inMonth = new Date(cursor + "T00:00:00").getMonth() === calMonth;
     const items = byDate[cursor] || [];
     cells += `
-      <div class="cal-cell ${inMonth ? "" : "outside"} ${cursor === today ? "today" : ""}" data-date="${cursor}">
-        <div class="cal-daynum">${Number(cursor.slice(8, 10))}</div>
-        ${items.slice(0, 4).map((i) => `
+      <div class="cal-cell ${inMonth ? "" : "outside"} ${cursor === today ? "today" : ""} ${cursor === calSelected ? "selected" : ""}" data-date="${cursor}">
+        <div class="cal-daynum">${Number(cursor.slice(8, 10))}${
+          items.length ? `<span class="cal-count">${items.length}</span>` : ""}</div>
+        ${items.slice(0, CAL_MAX_IN_CELL).map((i) => `
           <div class="cal-item ${i.kind} ${i.span ? `span ${i.spanClass}` : ""}"
                title="${escAttr(i.title)}"
                ${i.kind === "event" ? `data-event="${i.event_id}" data-occ="${i.occurrence}"${i.feed_id ? ` data-feed="${i.feed_id}"` : ""}` : `data-card="${i.card_id}"`}>
@@ -80,7 +101,8 @@ async function renderCalendar() {
             ${i.time ? `<span class="cal-time">${i.time}</span>` : ""}
             <span class="cal-item-text">${esc(i.title)}</span>
           </div>`).join("")}
-        ${items.length > 4 ? `<div class="cal-more">+${items.length - 4} more</div>` : ""}
+        ${items.length > CAL_MAX_IN_CELL
+          ? `<div class="cal-more">+${items.length - CAL_MAX_IN_CELL} more</div>` : ""}
       </div>`;
     cursor = addDaysISO(cursor, 1);
   }
@@ -105,7 +127,9 @@ async function renderCalendar() {
         ${cells}
       </div>
     </div>
-    <p class="cal-legend">Grey dots are card due dates. Bars span multi-day events. Click any event to edit it.</p>`;
+    <div id="cal-day"></div>
+    <p class="cal-legend">Tap a day to read everything on it. Grey dots are card
+    due dates; bars span multi-day events.</p>`;
 
   el("cal-prev").addEventListener("click", () => { shiftMonth(-1); });
   el("cal-next").addEventListener("click", () => { shiftMonth(1); });
@@ -117,11 +141,22 @@ async function renderCalendar() {
   el("new-event").addEventListener("click", () => openEventModal(null));
   el("cal-feeds").addEventListener("click", openFeedsModal);
 
+  // A single tap anywhere in a cell opens that day. This replaces the old
+  // double-click-to-create: a phone has no double-click, so on mobile the
+  // grid used to be entirely inert - you could see that a day had something
+  // on it and had no way to find out what.
   panel.querySelectorAll(".cal-cell").forEach((cell) => {
-    cell.addEventListener("dblclick", () => openEventModal(null, cell.dataset.date));
+    cell.addEventListener("click", () => selectDay(cell.dataset.date));
+    cell.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      openEventModal(null, cell.dataset.date);
+    });
   });
+  // Tapping an item still jumps straight to that one event on desktop, but it
+  // no longer swallows the tap on mobile, where the pill is a few pixels tall.
   panel.querySelectorAll(".cal-item.event").forEach((item) => {
     item.addEventListener("click", (e) => {
+      if (window.matchMedia("(max-width: 820px)").matches) return;  // let the day open
       e.stopPropagation();
       if (item.dataset.feed) {
         toast("From a subscribed calendar — edit it at the source", "info", 4500);
@@ -130,6 +165,114 @@ async function renderCalendar() {
       openEventModal(Number(item.dataset.event), null, item.dataset.occ);
     });
   });
+
+  renderDayPanel();
+}
+
+function selectDay(date) {
+  calSelected = calSelected === date ? null : date;
+  document.querySelectorAll(".cal-cell").forEach((c) =>
+    c.classList.toggle("selected", c.dataset.date === calSelected));
+  renderDayPanel();
+  if (calSelected) {
+    // On a phone the panel is below the fold; without this the tap appears to
+    // do nothing at all.
+    el("cal-day")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+}
+
+const CAL_MAX_IN_CELL = 4;
+
+// One day, read properly: every event and due card, with times, location,
+// notes and the actions that apply. This is the fix for "all the stuff is
+// unviewable" - the grid stays a map and this is the page.
+function renderDayPanel() {
+  const box = el("cal-day");
+  if (!box) return;
+  if (!calSelected) { box.innerHTML = ""; return; }
+
+  const items = (calByDate[calSelected] || []).slice().sort(calDaySort);
+  const isToday = calSelected === todayISO();
+
+  const rows = items.map((i) => {
+    if (i.kind === "card") {
+      return `
+        <div class="cal-day-row card" data-card="${i.card_id}">
+          <span class="cal-day-when">due</span>
+          <span class="dot dot-${esc(i.color)}"></span>
+          <span class="cal-day-main">
+            <span class="cal-day-title">${esc(i.title)}</span>
+            <span class="cal-day-sub">${esc(i.board_title || "")}${
+              i.list_title ? " · " + esc(i.list_title) : ""}</span>
+          </span>
+        </div>`;
+    }
+    return `
+      <div class="cal-day-row event" data-event="${i.event_id}" data-occ="${i.occurrence}"
+           ${i.feed_id ? `data-feed="${i.feed_id}"` : ""}>
+        <span class="cal-day-when">${esc(calWhen(i))}</span>
+        <span class="dot dot-${esc(i.color)}"></span>
+        <span class="cal-day-main">
+          <span class="cal-day-title">${esc(i.title)}</span>
+          ${i.location ? `<span class="cal-day-sub">${calLinkify(i.location)}</span>` : ""}
+          ${i.description ? `<span class="cal-day-desc">${esc(i.description)}</span>` : ""}
+          ${i.span ? `<span class="cal-day-sub">${esc(fmtDate(i.startDay))} – ${esc(fmtDate(i.endDay))}</span>` : ""}
+          ${i.feed_id ? `<span class="tag">subscribed</span>` : ""}
+          ${i.rrule ? `<span class="tag">repeats</span>` : ""}
+        </span>
+      </div>`;
+  }).join("");
+
+  box.innerHTML = `
+    <div class="joint-card cal-day-panel">
+      <div class="cal-day-head">
+        <span class="cal-day-date">${esc(fmtDateLong(calSelected))}${isToday ? " · today" : ""}</span>
+        <span class="cal-day-n">${items.length} item${items.length === 1 ? "" : "s"}</span>
+        <button class="btn tiny" id="cal-day-add">+ Event</button>
+        <button class="icon-btn" id="cal-day-close" aria-label="Close">×</button>
+      </div>
+      ${rows || `<p class="empty-state small">Nothing on this day.</p>`}
+    </div>`;
+
+  el("cal-day-close").addEventListener("click", () => selectDay(calSelected));
+  el("cal-day-add").addEventListener("click", () => openEventModal(null, calSelected));
+
+  box.querySelectorAll(".cal-day-row.event").forEach((row) =>
+    row.addEventListener("click", (e) => {
+      if (e.target.tagName === "A") return;      // let a location link open
+      if (row.dataset.feed) {
+        toast("From a subscribed calendar — edit it at the source", "info", 4500);
+        return;
+      }
+      openEventModal(Number(row.dataset.event), null, row.dataset.occ);
+    }));
+  box.querySelectorAll(".cal-day-row.card").forEach((row) =>
+    row.addEventListener("click", () => { go("board"); }));
+}
+
+// All-day and multi-day runs first, then by clock time.
+function calDaySort(a, b) {
+  const rank = (i) => (i.kind === "card" ? 2 : (i.span || i.all_day) ? 0 : 1);
+  if (rank(a) !== rank(b)) return rank(a) - rank(b);
+  return (a.start_at || "").localeCompare(b.start_at || "");
+}
+
+function calWhen(i) {
+  if (i.all_day) return "all day";
+  if (i.span && i.startDay !== calSelected) return "ongoing";
+  if (!i.start_at) return "";
+  const from = fmtTime(i.start_at);
+  const to = i.end_at && i.endDay === calSelected ? fmtTime(i.end_at) : "";
+  return to && to !== from ? `${from}–${to}` : from;
+}
+
+// A location is very often a URL in practice (a meeting link, a challenge
+// platform), and a day panel you cannot click through from is half a feature.
+function calLinkify(text) {
+  const s = esc(text);
+  return /^https?:\/\//i.test(text)
+    ? `<a href="${escAttr(text)}" target="_blank" rel="noopener">${s}</a>`
+    : s;
 }
 
 function isoOf(d) {

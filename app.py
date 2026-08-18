@@ -15,6 +15,10 @@ from db import init_db, connect
 from api import api, API_TOKEN
 from social import social
 from finance import finance
+from academics import academics
+from printer import printer
+from govee import govee
+from homelab import homelab
 import finance_ai  # noqa: F401  - registers /api/finance/ai/* on the blueprint
 from recurrence import TZ_NAME
 from calendars import start_auto_sync, AUTO_SYNC_MINUTES
@@ -26,6 +30,10 @@ app = Flask(__name__)
 app.register_blueprint(api)
 app.register_blueprint(social)
 app.register_blueprint(finance)
+app.register_blueprint(academics)
+app.register_blueprint(printer)
+app.register_blueprint(govee)
+app.register_blueprint(homelab)
 
 # Flask's own limit; api.py enforces the friendlier per-file check.
 app.config["MAX_CONTENT_LENGTH"] = (
